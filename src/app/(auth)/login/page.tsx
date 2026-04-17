@@ -1,47 +1,100 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { createClient, isSupabaseConfigured } from '@/lib/supabase/client'
+import { createClient, isSupabaseConfigured, getConfigDiagnostics } from '@/lib/supabase/client'
 
 export default function LoginPage() {
-  const router = useRouter()
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [error, setError]       = useState('')
   const [loading, setLoading]   = useState(false)
+
+  // 設定診断（画面表示用）
+  const diag = getConfigDiagnostics()
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     setError('')
 
-    // Supabase未設定時はデモモードで直接ダッシュボードへ
+    // ── Supabase 未設定 → デモモード ───────────────────────
     if (!isSupabaseConfigured) {
+      console.warn('[Smart TAYORU] デモモードでログイン（Supabase未設定）')
       window.location.href = '/dashboard'
       return
     }
 
-    const supabase = createClient()
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    // ── 通常ログイン ────────────────────────────────────────
+    try {
+      const supabase = createClient()
+      const { error: authError } = await supabase.auth.signInWithPassword({ email, password })
 
-    if (error) {
-      // 401: APIキーが無効（service_role キーを使っている場合など）
-      if (error.status === 401 || error.message.toLowerCase().includes('api key') || error.message.toLowerCase().includes('invalid key')) {
-        setError('APIキーが無効です（401）。.env.local の NEXT_PUBLIC_SUPABASE_ANON_KEY に「anon（public）」キーを設定してください。service_role キーは使用できません。')
-      } else if (error.message.includes('Invalid login credentials')) {
-        setError('メールアドレスまたはパスワードが正しくありません。')
-      } else if (error.message.includes('Email not confirmed')) {
-        setError('メールアドレスの確認が完了していません。受信メールをご確認ください。')
-      } else {
-        setError(`ログインエラー: ${error.message}`)
+      if (authError) {
+        // 401: APIキーが無効
+        if (
+          authError.status === 401 ||
+          authError.message.toLowerCase().includes('api key') ||
+          authError.message.toLowerCase().includes('invalid key')
+        ) {
+          setError(
+            'APIキーが無効です（401）。\n' +
+            'Vercel の環境変数 NEXT_PUBLIC_SUPABASE_ANON_KEY に「anon（public）」キーを設定し、再デプロイしてください。\n' +
+            '※ service_role キーは使用できません。'
+          )
+        } else if (authError.message.includes('Invalid login credentials')) {
+          setError('メールアドレスまたはパスワードが正しくありません。')
+        } else if (authError.message.includes('Email not confirmed')) {
+          setError('メールアドレスの確認が完了していません。受信メールをご確認ください。')
+        } else {
+          setError(`ログインエラー: ${authError.message}`)
+        }
+        setLoading(false)
+        return
       }
-      setLoading(false)
-      return
-    }
 
-    // セッションCookieが確実に反映されるようフルリロードでリダイレクト
-    window.location.href = '/dashboard'
+      // ログイン成功 → フルリロードでセッション Cookie を確定
+      window.location.href = '/dashboard'
+
+    } catch (err: unknown) {
+      // ── fetch レベルの例外（Invalid URL / ネットワーク断など）──
+      setLoading(false)
+
+      const message = err instanceof Error ? err.message : String(err)
+
+      if (
+        message.includes('Invalid value') ||
+        message.includes('Failed to fetch') ||
+        message.includes('fetch') ||
+        message.includes('NetworkError')
+      ) {
+        // 環境変数が実際に読み込まれているか診断情報を付加して表示
+        const urlPreview  = process.env.NEXT_PUBLIC_SUPABASE_URL
+          ? `"${process.env.NEXT_PUBLIC_SUPABASE_URL.slice(0, 40)}..."`
+          : '（未設定 / 空文字）'
+        const keyPreview  = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+          ? `"${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.slice(0, 10)}..."（${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.length}文字）`
+          : '（未設定 / 空文字）'
+
+        setError(
+          `通信エラー: ${message}\n\n` +
+          `【環境変数の読み込み状態】\n` +
+          `NEXT_PUBLIC_SUPABASE_URL  = ${urlPreview}\n` +
+          `NEXT_PUBLIC_SUPABASE_ANON_KEY = ${keyPreview}\n\n` +
+          `Vercel の Environment Variables を確認し、再デプロイしてください。`
+        )
+        // コンソールにも詳細を出力
+        console.error('[Smart TAYORU] fetch エラー詳細:', {
+          message,
+          NEXT_PUBLIC_SUPABASE_URL:      process.env.NEXT_PUBLIC_SUPABASE_URL,
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+            ? `${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.slice(0, 10)}... (${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.length}文字)`
+            : undefined,
+        })
+      } else {
+        setError(`予期しないエラーが発生しました: ${message}`)
+        console.error('[Smart TAYORU] ログイン予期しないエラー:', err)
+      }
+    }
   }
 
   return (
@@ -63,21 +116,30 @@ export default function LoginPage() {
           <h1 className="text-lg font-bold text-[#1a2332] mb-1">ログイン</h1>
           <p className="text-sm text-[#8f9db0] mb-6">アカウント情報を入力してください</p>
 
+          {/* デモモードバナー */}
           {!isSupabaseConfigured && (
-            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
-              <strong className="font-bold">デモモード</strong> — Supabase未設定のため、任意のメールアドレス・パスワードでログインできます。
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800 space-y-1">
+              <div className="font-bold">デモモード（Supabase未接続）</div>
+              {diag.reason && (
+                <div className="text-xs text-amber-700">原因: {diag.reason}</div>
+              )}
+              {diag.hint && (
+                <div className="text-xs text-amber-600">対処: {diag.hint}</div>
+              )}
+              <div className="text-xs mt-1">任意のメールアドレス・パスワードでログインできます。</div>
             </div>
           )}
 
+          {/* エラー表示 */}
           {error && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 whitespace-pre-wrap break-all">
               {error}
             </div>
           )}
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label className="block text-xs font-600 text-[#5a6a7e] mb-1.5">
+              <label className="block text-xs font-semibold text-[#5a6a7e] mb-1.5">
                 メールアドレス
               </label>
               <input
