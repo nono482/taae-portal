@@ -1,16 +1,13 @@
 'use client'
 
 import { useState } from 'react'
-import { createClient, isSupabaseConfigured, getConfigDiagnostics } from '@/lib/supabase/client'
+import { createClient, isSupabaseConfigured } from '@/lib/supabase/client'
 
 export default function LoginPage() {
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [error, setError]       = useState('')
   const [loading, setLoading]   = useState(false)
-
-  // 設定診断（画面表示用）
-  const diag = getConfigDiagnostics()
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
@@ -118,15 +115,8 @@ export default function LoginPage() {
 
           {/* デモモードバナー */}
           {!isSupabaseConfigured && (
-            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800 space-y-1">
-              <div className="font-bold">デモモード（Supabase未接続）</div>
-              {diag.reason && (
-                <div className="text-xs text-amber-700">原因: {diag.reason}</div>
-              )}
-              {diag.hint && (
-                <div className="text-xs text-amber-600">対処: {diag.hint}</div>
-              )}
-              <div className="text-xs mt-1">任意のメールアドレス・パスワードでログインできます。</div>
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+              <strong className="font-bold">デモモード</strong> — Supabase未設定のため、任意のメールアドレス・パスワードでログインできます。
             </div>
           )}
 
@@ -174,24 +164,6 @@ export default function LoginPage() {
               {loading ? 'ログイン中...' : 'ログイン'}
             </button>
 
-            {/* ── 環境変数チェック（デバッグ用・確認後削除） ── */}
-            <div className="mt-3 p-2 bg-slate-100 rounded text-[10px] text-slate-500 font-mono break-all space-y-0.5">
-              <div className="font-bold text-slate-600">【環境変数チェック】</div>
-              <div>
-                SUPABASE_URL:{' '}
-                {process.env.NEXT_PUBLIC_SUPABASE_URL
-                  ? <span className="text-green-700">✓ {process.env.NEXT_PUBLIC_SUPABASE_URL}</span>
-                  : <span className="text-red-600">✗ 未設定（undefined / 空）</span>
-                }
-              </div>
-              <div>
-                SUPABASE_KEY:{' '}
-                {process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
-                  ? <span className="text-green-700">✓ 設定済み（{process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.length}文字）</span>
-                  : <span className="text-red-600">✗ 未設定（undefined / 空）</span>
-                }
-              </div>
-            </div>
           </form>
         </div>
 
