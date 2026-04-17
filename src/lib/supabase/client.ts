@@ -4,6 +4,14 @@ import type { Database } from './types'
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
 const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''
 
+// ─── 起動時デバッグログ（確認後に削除予定） ─────────────────
+console.log(
+  '[TAYORU DEBUG] env check\n',
+  'URL  :', SUPABASE_URL  ? `"${SUPABASE_URL}"` : '⚠️ EMPTY / UNDEFINED',
+  '\n',
+  'KEY  :', SUPABASE_KEY  ? `"${SUPABASE_KEY.slice(0, 5)}${'*'.repeat(10)}"（${SUPABASE_KEY.length}文字）` : '⚠️ EMPTY / UNDEFINED',
+)
+
 // ─── 設定診断（画面表示用） ───────────────────────────────
 export interface ConfigDiagnostics {
   ok:     boolean

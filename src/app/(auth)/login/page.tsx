@@ -173,6 +173,25 @@ export default function LoginPage() {
             >
               {loading ? 'ログイン中...' : 'ログイン'}
             </button>
+
+            {/* ── 環境変数チェック（デバッグ用・確認後削除） ── */}
+            <div className="mt-3 p-2 bg-slate-100 rounded text-[10px] text-slate-500 font-mono break-all space-y-0.5">
+              <div className="font-bold text-slate-600">【環境変数チェック】</div>
+              <div>
+                SUPABASE_URL:{' '}
+                {process.env.NEXT_PUBLIC_SUPABASE_URL
+                  ? <span className="text-green-700">✓ {process.env.NEXT_PUBLIC_SUPABASE_URL}</span>
+                  : <span className="text-red-600">✗ 未設定（undefined / 空）</span>
+                }
+              </div>
+              <div>
+                SUPABASE_KEY:{' '}
+                {process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+                  ? <span className="text-green-700">✓ 設定済み（{process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY.length}文字）</span>
+                  : <span className="text-red-600">✗ 未設定（undefined / 空）</span>
+                }
+              </div>
+            </div>
           </form>
         </div>
 
