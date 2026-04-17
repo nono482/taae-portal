@@ -1,8 +1,8 @@
 import { createBrowserClient } from '@supabase/ssr'
 import type { Database } from './types'
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? ''
-const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''
+const SUPABASE_URL = (process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').trim()
+const SUPABASE_KEY = (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '').trim()
 
 // ─── 起動時デバッグログ（確認後に削除予定） ─────────────────
 console.log(
