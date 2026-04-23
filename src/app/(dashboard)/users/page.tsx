@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { cn } from '@/lib/utils'
-import { getUsers, deleteUserRecord, type UserRow } from '@/app/actions/users'
+import { getUsers, deleteUserRecord, inviteUser, type UserRow } from '@/app/actions/users'
 
 // ─── ロール設定 ───────────────────────────────────────────
 const ROLE_CFG: Record<string, { label: string; cls: string }> = {
@@ -23,6 +23,144 @@ function avatarColor(id: string) {
 }
 function avatarInitial(name: string) {
   return name?.trim()[0] ?? '?'
+}
+
+// ─── 招待モーダル ─────────────────────────────────────────
+const ROLE_OPTIONS = [
+  { value: 'member',     label: 'メンバー（経費申請・閲覧）' },
+  { value: 'accountant', label: '経理担当（経費承認・レポート）' },
+  { value: 'admin',      label: '管理者（フルアクセス）' },
+]
+
+function InviteModal({
+  onClose,
+  onInvited,
+}: {
+  onClose:   () => void
+  onInvited: (msg: string) => void
+}) {
+  const [email,       setEmail]       = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [role,        setRole]        = useState('member')
+  const [loading,     setLoading]     = useState(false)
+  const [error,       setError]       = useState<string | null>(null)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setLoading(true)
+    const result = await inviteUser(email, displayName, role)
+    setLoading(false)
+    if (result.error) {
+      setError(result.error)
+    } else {
+      onInvited(`${email} に招待メールを送信しました`)
+      onClose()
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* ヘッダー */}
+        <div className="px-6 pt-6 pb-4 border-b border-[#e2e6ec]">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-[15px] font-bold text-[#1a2332]">メンバーを招待</div>
+              <div className="text-[12px] text-[#8f9db0] mt-0.5">招待メールが指定のアドレスに送信されます</div>
+            </div>
+            <button
+              onClick={onClose}
+              className="w-8 h-8 flex items-center justify-center rounded-full text-[#8f9db0] hover:bg-slate-100 transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* フォーム */}
+        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
+          {/* メールアドレス */}
+          <div>
+            <label className="block text-[12px] font-semibold text-[#5a6a7e] mb-1.5">
+              メールアドレス <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="email"
+              required
+              autoFocus
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="example@company.com"
+              className="w-full border border-[#e2e6ec] rounded-lg px-3 py-2.5 text-[13px] text-[#1a2332] placeholder-[#8f9db0] focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
+            />
+          </div>
+
+          {/* 表示名 */}
+          <div>
+            <label className="block text-[12px] font-semibold text-[#5a6a7e] mb-1.5">
+              表示名 <span className="text-[11px] font-normal text-[#8f9db0]">（省略可・未入力はメール@前を使用）</span>
+            </label>
+            <input
+              type="text"
+              value={displayName}
+              onChange={e => setDisplayName(e.target.value)}
+              placeholder="山田 太郎"
+              className="w-full border border-[#e2e6ec] rounded-lg px-3 py-2.5 text-[13px] text-[#1a2332] placeholder-[#8f9db0] focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
+            />
+          </div>
+
+          {/* 権限 */}
+          <div>
+            <label className="block text-[12px] font-semibold text-[#5a6a7e] mb-1.5">権限</label>
+            <select
+              value={role}
+              onChange={e => setRole(e.target.value)}
+              className="w-full border border-[#e2e6ec] rounded-lg px-3 py-2.5 text-[13px] text-[#1a2332] focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200 bg-white"
+            >
+              {ROLE_OPTIONS.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* エラー */}
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-[12px] text-red-700">
+              {error}
+            </div>
+          )}
+
+          {/* ボタン */}
+          <div className="flex gap-3 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={loading}
+              className="flex-1 px-4 py-2.5 border border-[#e2e6ec] text-[13px] font-semibold text-[#5a6a7e] rounded-lg hover:bg-slate-50 disabled:opacity-50 transition-colors"
+            >
+              キャンセル
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex-1 px-4 py-2.5 bg-[#1e3a5f] hover:bg-[#16304f] disabled:opacity-50 text-white text-[13px] font-semibold rounded-lg transition-colors"
+            >
+              {loading ? '送信中…' : '招待メールを送信'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
 }
 
 // ─── 削除確認モーダル ─────────────────────────────────────
@@ -350,29 +488,12 @@ export default function UsersPage() {
         </div>
       </div>
 
-      {/* 招待モーダル（プレースホルダー） */}
+      {/* 招待モーダル */}
       {showInvite && (
-        <div
-          className="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
-          onClick={() => setShowInvite(false)}
-        >
-          <div
-            className="bg-white rounded-xl shadow-xl w-[480px] p-6"
-            onClick={e => e.stopPropagation()}
-          >
-            <h2 className="text-[16px] font-bold text-[#1a2332] mb-2">メンバーを招待</h2>
-            <p className="text-[12px] text-[#8f9db0] mb-5">
-              Supabase ダッシュボードの「Authentication → Invite User」から招待メールを送信してください。<br />
-              招待されたユーザーが初回ログイン後、このページに表示されます。
-            </p>
-            <button
-              onClick={() => setShowInvite(false)}
-              className="w-full px-4 py-2.5 border border-[#e2e6ec] text-[13px] font-semibold text-[#5a6a7e] rounded-lg hover:bg-slate-50 transition-colors"
-            >
-              閉じる
-            </button>
-          </div>
-        </div>
+        <InviteModal
+          onClose={() => setShowInvite(false)}
+          onInvited={msg => { showToast(msg); load() }}
+        />
       )}
 
       {/* 削除確認モーダル */}

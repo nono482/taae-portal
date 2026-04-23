@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { revalidatePath } from 'next/cache'
 
 async function getCtx() {
@@ -65,6 +66,62 @@ export async function deleteUserRecord(targetUserId: string): Promise<{ success?
     .eq('tenant_id', tenantId)
 
   if (error) return { error: error.message }
+
+  revalidatePath('/users')
+  return { success: true }
+}
+
+// ─── メンバー招待 ────────────────────────────────────────
+export async function inviteUser(
+  email: string,
+  displayName: string,
+  role: string,
+): Promise<{ success?: true; error?: string }> {
+  const { db, user: me, tenantId, role: myRole } = await getCtx()
+
+  if (!me || !tenantId) return { error: '未認証です' }
+  if (myRole !== 'admin') return { error: '管理者権限が必要です' }
+
+  const trimmedEmail = email.trim().toLowerCase()
+  if (!trimmedEmail || !trimmedEmail.includes('@')) {
+    return { error: '正しいメールアドレスを入力してください' }
+  }
+
+  const name = displayName.trim() || trimmedEmail.split('@')[0]
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000').trim()
+
+  let adminClient: ReturnType<typeof createAdminClient>
+  try {
+    adminClient = createAdminClient()
+  } catch {
+    return { error: 'サービスロールキーが設定されていません（環境変数 SUPABASE_SERVICE_ROLE_KEY を確認してください）' }
+  }
+
+  // Auth ユーザーを作成して招待メールを送信
+  const { data, error: authError } = await adminClient.auth.admin.inviteUserByEmail(
+    trimmedEmail,
+    {
+      data: { display_name: name, tenant_id: tenantId, role },
+      redirectTo: `${appUrl}/auth/callback`,
+    },
+  )
+  if (authError) return { error: authError.message }
+
+  // users テーブルに招待済みレコードを挿入（is_active: false）
+  const { error: dbError } = await db
+    .from('users')
+    .upsert(
+      {
+        id:           data.user.id,
+        email:        trimmedEmail,
+        display_name: name,
+        tenant_id:    tenantId,
+        role,
+        is_active:    false,
+      },
+      { onConflict: 'id' },
+    )
+  if (dbError) return { error: dbError.message }
 
   revalidatePath('/users')
   return { success: true }
