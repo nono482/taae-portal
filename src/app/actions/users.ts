@@ -117,7 +117,7 @@ export async function inviteUser(
     trimmedEmail,
     {
       data: { display_name: name, tenant_id: tenantId, role },
-      redirectTo: `${appUrl}/auth/callback`,
+      redirectTo: `${appUrl}/auth/callback?next=/update-password`,
     },
   )
   if (authError) return { error: authError.message }

@@ -8,6 +8,10 @@ export async function GET(request: NextRequest) {
   const token_hash = searchParams.get('token_hash')
   const type       = searchParams.get('type') as 'invite' | 'recovery' | 'signup' | 'email' | null
 
+  // open-redirect 防止: next は必ず相対パス（/ 始まり）のみ許可
+  const rawNext = searchParams.get('next') ?? ''
+  const next    = rawNext.startsWith('/') ? rawNext : '/dashboard'
+
   if (token_hash && type) {
     const cookieStore = await cookies()
 
@@ -29,7 +33,8 @@ export async function GET(request: NextRequest) {
     const { error } = await supabase.auth.verifyOtp({ token_hash, type })
 
     if (!error) {
-      const dest = type === 'invite' ? '/update-password' : '/dashboard'
+      // type=invite は next（=/update-password）を優先、それ以外は next か /dashboard
+      const dest = type === 'invite' ? (next || '/update-password') : next
       return NextResponse.redirect(new URL(dest, origin))
     }
   }
