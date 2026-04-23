@@ -97,6 +97,21 @@ export async function inviteUser(
     return { error: 'サービスロールキーが設定されていません（環境変数 SUPABASE_SERVICE_ROLE_KEY を確認してください）' }
   }
 
+  // 同テナント内に既存ユーザーがいれば削除してから再招待
+  const { data: existing } = await db
+    .from('users')
+    .select('id')
+    .eq('email', trimmedEmail)
+    .eq('tenant_id', tenantId)
+    .maybeSingle()
+
+  if (existing?.id) {
+    const { error: delAuthErr } = await adminClient.auth.admin.deleteUser(existing.id)
+    if (delAuthErr) return { error: `既存ユーザーの削除に失敗しました: ${delAuthErr.message}` }
+    // CASCADE がない場合の保険として users テーブルも明示削除
+    await db.from('users').delete().eq('id', existing.id)
+  }
+
   // Auth ユーザーを作成して招待メールを送信
   const { data, error: authError } = await adminClient.auth.admin.inviteUserByEmail(
     trimmedEmail,
