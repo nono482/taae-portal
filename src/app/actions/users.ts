@@ -97,19 +97,19 @@ export async function inviteUser(
     return { error: 'サービスロールキーが設定されていません（環境変数 SUPABASE_SERVICE_ROLE_KEY を確認してください）' }
   }
 
-  // 同テナント内に既存ユーザーがいれば削除してから再招待
-  const { data: existing } = await db
-    .from('users')
-    .select('id')
-    .eq('email', trimmedEmail)
-    .eq('tenant_id', tenantId)
-    .maybeSingle()
+  // Auth を直接検索（users テーブルにレコードがない場合もカバー）
+  const { data: listData, error: listErr } = await adminClient.auth.admin.listUsers({ perPage: 1000 })
+  if (listErr) console.error('[inviteUser] listUsers:', listErr.message)
 
-  if (existing?.id) {
-    const { error: delAuthErr } = await adminClient.auth.admin.deleteUser(existing.id)
+  const existingAuthUser = (listData?.users ?? []).find(
+    (u) => u.email?.toLowerCase() === trimmedEmail,
+  )
+
+  if (existingAuthUser) {
+    console.log('[inviteUser] 既存 Auth ユーザーを削除して再招待:', existingAuthUser.id)
+    const { error: delAuthErr } = await adminClient.auth.admin.deleteUser(existingAuthUser.id)
     if (delAuthErr) return { error: `既存ユーザーの削除に失敗しました: ${delAuthErr.message}` }
-    // CASCADE がない場合の保険として users テーブルも明示削除
-    await db.from('users').delete().eq('id', existing.id)
+    await db.from('users').delete().eq('id', existingAuthUser.id)
   }
 
   // Auth ユーザーを作成して招待メールを送信
