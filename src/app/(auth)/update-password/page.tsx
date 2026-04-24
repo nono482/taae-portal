@@ -11,16 +11,21 @@ export default function UpdatePasswordPage() {
   const [error,    setError]    = useState('')
   const [ready,    setReady]    = useState(false)
 
-  // セッションなし（招待リンク経由でない）→ ログインへ
   useEffect(() => {
     const supabase = createClient()
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) {
-        window.location.href = '/login'
-      } else {
+
+    // onAuthStateChange fires immediately with the current session (if any),
+    // then again whenever the session changes. This avoids the race condition
+    // where getSession() is called before cookies from /auth/callback arrive.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
         setReady(true)
+      } else {
+        window.location.href = '/login'
       }
     })
+
+    return () => subscription.unsubscribe()
   }, [])
 
   async function handleSubmit(e: React.FormEvent) {
