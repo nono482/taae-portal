@@ -4,6 +4,8 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { revalidatePath } from 'next/cache'
 
+const CALLBACK_URL = 'https://taae-portal.vercel.app/auth/callback'
+
 async function getCtx() {
   const supabase = await createClient()
   const db = supabase as any
@@ -28,7 +30,6 @@ export async function getUsers() {
     .eq('tenant_id', tenantId)
     .order('created_at', { ascending: true })
 
-  // 自分の role も返す
   const myRecord = (data ?? []).find((u: any) => u.id === me?.id)
 
   return {
@@ -48,9 +49,7 @@ export interface UserRow {
   created_at:   string
 }
 
-// ─── ユーザー削除（usersテーブルのレコード削除） ──────────
-// Supabase Auth のユーザー本体は service_role が必要なため
-// ここでは usersテーブルのみ削除。Auth側は Supabase ダッシュボードで対応。
+// ─── ユーザー削除 ─────────────────────────────────────────
 export async function deleteUserRecord(targetUserId: string): Promise<{ success?: true; error?: string }> {
   const { db, user: me, tenantId, role } = await getCtx()
 
@@ -58,7 +57,6 @@ export async function deleteUserRecord(targetUserId: string): Promise<{ success?
   if (role !== 'admin')   return { error: '管理者権限が必要です' }
   if (targetUserId === me.id) return { error: '自分自身は削除できません' }
 
-  // 対象が同テナントに属するか確認してから削除
   const { error } = await db
     .from('users')
     .delete()
@@ -71,20 +69,16 @@ export async function deleteUserRecord(targetUserId: string): Promise<{ success?
   return { success: true }
 }
 
-// ─── メンバー招待 ────────────────────────────────────────
-export async function inviteUser(
-  email: string,
-  displayName: string,
-  role: string,
-): Promise<{ success?: true; inviteUrl?: string; error?: string }> {
+// ─── 招待共通ヘルパー ─────────────────────────────────────
+async function prepareInvite(email: string, displayName: string, role: string) {
   const { db, user: me, tenantId, role: myRole } = await getCtx()
 
-  if (!me || !tenantId) return { error: '未認証です' }
-  if (myRole !== 'admin') return { error: '管理者権限が必要です' }
+  if (!me || !tenantId) return { error: '未認証です' as string }
+  if (myRole !== 'admin') return { error: '管理者権限が必要です' as string }
 
   const trimmedEmail = email.trim().toLowerCase()
   if (!trimmedEmail || !trimmedEmail.includes('@')) {
-    return { error: '正しいメールアドレスを入力してください' }
+    return { error: '正しいメールアドレスを入力してください' as string }
   }
 
   const name = displayName.trim() || trimmedEmail.split('@')[0]
@@ -93,57 +87,78 @@ export async function inviteUser(
   try {
     adminClient = createAdminClient()
   } catch {
-    return { error: 'サービスロールキーが設定されていません（環境変数 SUPABASE_SERVICE_ROLE_KEY を確認してください）' }
+    return { error: 'サービスロールキーが設定されていません（SUPABASE_SERVICE_ROLE_KEY を確認してください）' as string }
   }
 
-  // Auth を直接検索（users テーブルにレコードがない場合もカバー）
   const { data: listData, error: listErr } = await adminClient.auth.admin.listUsers({ perPage: 1000 })
-  if (listErr) console.error('[inviteUser] listUsers:', listErr.message)
+  if (listErr) console.error('[invite] listUsers:', listErr.message)
 
-  const existingAuthUser = (listData?.users ?? []).find(
-    (u) => u.email?.toLowerCase() === trimmedEmail,
-  )
-
-  if (existingAuthUser) {
-    console.log('[inviteUser] 既存 Auth ユーザーを削除して再招待:', existingAuthUser.id)
-    const { error: delAuthErr } = await adminClient.auth.admin.deleteUser(existingAuthUser.id)
-    if (delAuthErr) return { error: `既存ユーザーの削除に失敗しました: ${delAuthErr.message}` }
-    await db.from('users').delete().eq('id', existingAuthUser.id)
+  const existing = (listData?.users ?? []).find(u => u.email?.toLowerCase() === trimmedEmail)
+  if (existing) {
+    console.log('[invite] 既存 Auth ユーザーを削除して再招待:', existing.id)
+    const { error: delErr } = await adminClient.auth.admin.deleteUser(existing.id)
+    if (delErr) return { error: `既存ユーザーの削除に失敗しました: ${delErr.message}` as string }
+    await db.from('users').delete().eq('id', existing.id)
   }
 
-  // メール送信なしで招待URLのみ生成（テスト用）
+  return { db, tenantId, trimmedEmail, name, adminClient, error: null }
+}
+
+// ─── メンバー招待（URL生成・ボット対策ハッシュ付き） ─────
+export async function inviteUser(
+  email: string,
+  displayName: string,
+  role: string,
+): Promise<{ success?: true; inviteUrl?: string; error?: string }> {
+  const prep = await prepareInvite(email, displayName, role)
+  if (prep.error) return { error: prep.error }
+  const { db, tenantId, trimmedEmail, name, adminClient } = prep as Required<typeof prep>
+
   const { data, error: authError } = await adminClient.auth.admin.generateLink({
     type: 'invite',
     email: trimmedEmail,
     options: {
       data: { display_name: name, tenant_id: tenantId, role },
-      redirectTo: 'https://taae-portal.vercel.app/auth/callback',
+      redirectTo: CALLBACK_URL,
     },
   })
   if (authError) return { error: authError.message }
 
-  // users テーブルに招待済みレコードを挿入（is_active: false）
-  const { error: dbError } = await db
-    .from('users')
-    .upsert(
-      {
-        id:           data.user.id,
-        email:        trimmedEmail,
-        display_name: name,
-        tenant_id:    tenantId,
-        role,
-        is_active:    false,
-      },
-      { onConflict: 'id' },
-    )
+  const { error: dbError } = await db.from('users').upsert(
+    { id: data.user.id, email: trimmedEmail, display_name: name, tenant_id: tenantId, role, is_active: false },
+    { onConflict: 'id' },
+  )
   if (dbError) return { error: dbError.message }
 
   revalidatePath('/users')
 
-  // action_link をそのまま渡すとボット（facebookexternalhit 等）が
-  // URLをプレビュー取得した時点でトークンを消費してしまう。
-  // ハッシュフラグメントは HTTP リクエストに含まれないため、
-  // /invite#[base64] 形式の中継URLにするとボットが Supabase 検証 URL に到達できない。
+  // action_link をハッシュフラグメントに隠してボットのトークン消費を防ぐ
   const encoded = Buffer.from(data.properties.action_link).toString('base64url')
   return { success: true, inviteUrl: `https://taae-portal.vercel.app/invite#${encoded}` }
+}
+
+// ─── メンバー招待（メール直送信） ────────────────────────
+export async function inviteUserByEmail(
+  email: string,
+  displayName: string,
+  role: string,
+): Promise<{ success?: true; error?: string }> {
+  const prep = await prepareInvite(email, displayName, role)
+  if (prep.error) return { error: prep.error }
+  const { db, tenantId, trimmedEmail, name, adminClient } = prep as Required<typeof prep>
+
+  const { data, error: authError } = await adminClient.auth.admin.inviteUserByEmail(trimmedEmail, {
+    data: { display_name: name, tenant_id: tenantId, role },
+    redirectTo: CALLBACK_URL,
+  })
+  if (authError) return { error: authError.message }
+
+  const { error: dbError } = await db.from('users').upsert(
+    { id: data.user.id, email: trimmedEmail, display_name: name, tenant_id: tenantId, role, is_active: false },
+    { onConflict: 'id' },
+  )
+  if (dbError) return { error: dbError.message }
+
+  revalidatePath('/users')
+  return { success: true }
 }

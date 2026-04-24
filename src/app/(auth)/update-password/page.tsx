@@ -13,36 +13,47 @@ export default function UpdatePasswordPage() {
 
   useEffect(() => {
     const supabase = createClient()
-    let hasSession = false
 
-    // onAuthStateChange は非同期で発火する。
-    // implicit flow（#access_token=...）の場合：
-    //   1. INITIAL_SESSION(null) が先に来る（まだ hash 未処理）
-    //   2. その後 SIGNED_IN(session) が来る（hash 処理完了）
-    // → INITIAL_SESSION(null) で即リダイレクトしてはいけない。
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      console.log('[update-password] auth event:', event, 'session:', session ? '✓' : 'null')
+    async function init() {
+      // ① implicit flow: /auth/callback の HTML が #access_token=xxx を転送してきた場合
+      //    createBrowserClient は detectSessionInUrl: false のためハッシュを自動処理しない。
+      //    明示的に setSession() を呼ぶ必要がある。
+      const hash = window.location.hash.slice(1)
+      if (hash) {
+        const params       = new URLSearchParams(hash)
+        const accessToken  = params.get('access_token')
+        const refreshToken = params.get('refresh_token') ?? ''
+
+        if (accessToken) {
+          console.log('[update-password] implicit flow: setSession 試行')
+          const { data, error: sessErr } = await supabase.auth.setSession({
+            access_token:  accessToken,
+            refresh_token: refreshToken,
+          })
+          if (data.session) {
+            // セキュリティのためハッシュを URL から除去
+            window.history.replaceState(null, '', window.location.pathname)
+            setReady(true)
+            return
+          }
+          console.error('[update-password] setSession 失敗:', sessErr?.message)
+          window.location.href = '/login'
+          return
+        }
+      }
+
+      // ② PKCE / cookie フロー: /auth/callback がセッションを Cookie にセット済み
+      console.log('[update-password] cookie セッション確認')
+      const { data: { session } } = await supabase.auth.getSession()
       if (session) {
-        hasSession = true
         setReady(true)
-      } else if (event === 'SIGNED_OUT') {
+      } else {
+        console.log('[update-password] セッションなし → /login')
         window.location.href = '/login'
       }
-      // INITIAL_SESSION(null) はスルー。タイムアウトで後処理する。
-    })
-
-    // 5秒待ってもセッションが取れなければ諦めてログインへ
-    const timer = setTimeout(() => {
-      if (!hasSession) {
-        console.log('[update-password] タイムアウト → /login')
-        window.location.href = '/login'
-      }
-    }, 5000)
-
-    return () => {
-      subscription.unsubscribe()
-      clearTimeout(timer)
     }
+
+    init()
   }, [])
 
   async function handleSubmit(e: React.FormEvent) {
@@ -84,7 +95,6 @@ export default function UpdatePasswordPage() {
     <div className="min-h-screen bg-[#f4f6f9] flex items-center justify-center">
       <div className="w-full max-w-md">
 
-        {/* ロゴ */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center gap-2 mb-3">
             <div className="w-9 h-9 rounded-lg bg-[#1e3a5f] flex items-center justify-center text-white font-bold text-lg">
@@ -95,7 +105,6 @@ export default function UpdatePasswordPage() {
           <p className="text-sm text-[#8f9db0]">NONO合同会社 · 経営管理システム</p>
         </div>
 
-        {/* カード */}
         <div className="bg-white border border-[#e2e6ec] rounded-xl shadow-sm p-8">
           <div className="flex items-center gap-3 mb-5">
             <div className="w-9 h-9 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { cn } from '@/lib/utils'
-import { getUsers, deleteUserRecord, inviteUser, type UserRow } from '@/app/actions/users'
+import { getUsers, deleteUserRecord, inviteUser, inviteUserByEmail, type UserRow } from '@/app/actions/users'
 
 // ─── ロール設定 ───────────────────────────────────────────
 const ROLE_CFG: Record<string, { label: string; cls: string }> = {
@@ -32,6 +32,11 @@ const ROLE_OPTIONS = [
   { value: 'admin',      label: '管理者（フルアクセス）' },
 ]
 
+type InviteResult =
+  | null
+  | { type: 'email'; email: string }
+  | { type: 'url';   email: string; url: string }
+
 function InviteModal({
   onClose,
   onInvited,
@@ -42,43 +47,82 @@ function InviteModal({
   const [email,       setEmail]       = useState('')
   const [displayName, setDisplayName] = useState('')
   const [role,        setRole]        = useState('member')
-  const [loading,     setLoading]     = useState(false)
+  const [loading,     setLoading]     = useState<'email' | 'url' | null>(null)
   const [error,       setError]       = useState<string | null>(null)
-  const [inviteUrl,   setInviteUrl]   = useState<string | null>(null)
+  const [result,      setResult]      = useState<InviteResult>(null)
   const [copied,      setCopied]      = useState(false)
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setError(null)
-    setLoading(true)
-    const result = await inviteUser(email, displayName, role)
-    setLoading(false)
-    if (result.error) {
-      setError(result.error)
-    } else {
-      onInvited(`${email} の招待URLを生成しました`)
-      setInviteUrl(result.inviteUrl ?? null)
+  function validate() {
+    if (!email.trim() || !email.includes('@')) {
+      setError('正しいメールアドレスを入力してください')
+      return false
     }
+    setError(null)
+    return true
   }
 
-  async function handleCopy() {
-    if (!inviteUrl) return
-    await navigator.clipboard.writeText(inviteUrl)
+  async function handleSendEmail() {
+    if (!validate()) return
+    setLoading('email')
+    const res = await inviteUserByEmail(email, displayName, role)
+    setLoading(null)
+    if (res.error) { setError(res.error); return }
+    onInvited(`${email} に招待メールを送信しました`)
+    setResult({ type: 'email', email })
+  }
+
+  async function handleGenerateUrl() {
+    if (!validate()) return
+    setLoading('url')
+    const res = await inviteUser(email, displayName, role)
+    setLoading(null)
+    if (res.error) { setError(res.error); return }
+    onInvited(`${email} の招待URLを生成しました`)
+    setResult({ type: 'url', email, url: res.inviteUrl! })
+  }
+
+  async function handleCopy(url: string) {
+    await navigator.clipboard.writeText(url)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
 
-  // ── URL生成済み画面 ─────────────────────────────────────
-  if (inviteUrl) {
+  // ── メール送信済み画面 ──────────────────────────────────
+  if (result?.type === 'email') {
     return (
-      <div
-        className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-        onClick={onClose}
-      >
-        <div
-          className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden"
-          onClick={e => e.stopPropagation()}
-        >
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+        <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="px-6 pt-6 pb-4 border-b border-[#e2e6ec]">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <div>
+                <div className="text-[15px] font-bold text-[#1a2332]">招待メールを送信しました</div>
+                <div className="text-[12px] text-[#8f9db0] mt-0.5">{result.email}</div>
+              </div>
+            </div>
+          </div>
+          <div className="px-6 py-5 space-y-3">
+            <p className="text-[13px] text-[#5a6a7e] leading-relaxed">
+              招待メールが送信されました。ユーザーにメールを確認するよう伝えてください。
+            </p>
+            <button onClick={onClose} className="w-full py-2.5 bg-[#1e3a5f] hover:bg-[#16304f] text-white text-[13px] font-semibold rounded-lg transition-colors">
+              閉じる
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ── URL生成済み画面 ─────────────────────────────────────
+  if (result?.type === 'url') {
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+        <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden" onClick={e => e.stopPropagation()}>
           <div className="px-6 pt-6 pb-4 border-b border-[#e2e6ec]">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
@@ -88,31 +132,25 @@ function InviteModal({
               </div>
               <div>
                 <div className="text-[15px] font-bold text-[#1a2332]">招待URLを生成しました</div>
-                <div className="text-[12px] text-[#8f9db0] mt-0.5">{email}</div>
+                <div className="text-[12px] text-[#8f9db0] mt-0.5">{result.email}</div>
               </div>
             </div>
           </div>
-
           <div className="px-6 py-5 space-y-3">
-            <div className="text-[12px] font-semibold text-[#5a6a7e]">招待URL（テスト用・1回のみ有効）</div>
+            <div className="text-[12px] font-semibold text-[#5a6a7e]">招待URL（1回のみ有効）</div>
             <div className="bg-slate-50 border border-[#e2e6ec] rounded-lg px-3 py-2.5 text-[11px] text-[#5a6a7e] break-all leading-relaxed font-mono select-all">
-              {inviteUrl}
+              {result.url}
             </div>
             <button
-              onClick={handleCopy}
+              onClick={() => handleCopy(result.url)}
               className={cn(
                 'w-full py-2.5 text-[13px] font-semibold rounded-lg transition-colors',
-                copied
-                  ? 'bg-green-600 text-white'
-                  : 'bg-[#1e3a5f] hover:bg-[#16304f] text-white',
+                copied ? 'bg-green-600 text-white' : 'bg-[#1e3a5f] hover:bg-[#16304f] text-white',
               )}
             >
               {copied ? 'コピーしました ✓' : 'URLをコピー'}
             </button>
-            <button
-              onClick={onClose}
-              className="w-full py-2.5 border border-[#e2e6ec] text-[13px] font-semibold text-[#5a6a7e] rounded-lg hover:bg-slate-50 transition-colors"
-            >
+            <button onClick={onClose} className="w-full py-2.5 border border-[#e2e6ec] text-[13px] font-semibold text-[#5a6a7e] rounded-lg hover:bg-slate-50 transition-colors">
               閉じる
             </button>
           </div>
@@ -122,26 +160,18 @@ function InviteModal({
   }
 
   // ── フォーム画面 ────────────────────────────────────────
+  const busy = loading !== null
   return (
-    <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden"
-        onClick={e => e.stopPropagation()}
-      >
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden" onClick={e => e.stopPropagation()}>
         {/* ヘッダー */}
         <div className="px-6 pt-6 pb-4 border-b border-[#e2e6ec]">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-[15px] font-bold text-[#1a2332]">メンバーを招待</div>
-              <div className="text-[12px] text-[#8f9db0] mt-0.5">招待URLを生成します（メール送信なし）</div>
+              <div className="text-[12px] text-[#8f9db0] mt-0.5">メール送信またはURLを生成して招待できます</div>
             </div>
-            <button
-              onClick={onClose}
-              className="w-8 h-8 flex items-center justify-center rounded-full text-[#8f9db0] hover:bg-slate-100 transition-colors"
-            >
+            <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full text-[#8f9db0] hover:bg-slate-100 transition-colors">
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
               </svg>
@@ -150,8 +180,7 @@ function InviteModal({
         </div>
 
         {/* フォーム */}
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
-          {/* メールアドレス */}
+        <div className="px-6 py-5 space-y-4">
           <div>
             <label className="block text-[12px] font-semibold text-[#5a6a7e] mb-1.5">
               メールアドレス <span className="text-red-500">*</span>
@@ -167,7 +196,6 @@ function InviteModal({
             />
           </div>
 
-          {/* 表示名 */}
           <div>
             <label className="block text-[12px] font-semibold text-[#5a6a7e] mb-1.5">
               表示名 <span className="text-[11px] font-normal text-[#8f9db0]">（省略可・未入力はメール@前を使用）</span>
@@ -181,7 +209,6 @@ function InviteModal({
             />
           </div>
 
-          {/* 権限 */}
           <div>
             <label className="block text-[12px] font-semibold text-[#5a6a7e] mb-1.5">権限</label>
             <select
@@ -195,32 +222,46 @@ function InviteModal({
             </select>
           </div>
 
-          {/* エラー */}
           {error && (
             <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-[12px] text-red-700">
               {error}
             </div>
           )}
 
-          {/* ボタン */}
-          <div className="flex gap-3 pt-1">
+          {/* 二系統ボタン */}
+          <div className="space-y-2 pt-1">
+            <button
+              type="button"
+              onClick={handleSendEmail}
+              disabled={busy}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#1e3a5f] hover:bg-[#16304f] disabled:opacity-50 text-white text-[13px] font-semibold rounded-lg transition-colors"
+            >
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+              {loading === 'email' ? '送信中…' : '招待メールを送信'}
+            </button>
+            <button
+              type="button"
+              onClick={handleGenerateUrl}
+              disabled={busy}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 border border-[#1e3a5f] hover:bg-slate-50 disabled:opacity-50 text-[#1e3a5f] text-[13px] font-semibold rounded-lg transition-colors"
+            >
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+              </svg>
+              {loading === 'url' ? '生成中…' : '招待URLを生成'}
+            </button>
             <button
               type="button"
               onClick={onClose}
-              disabled={loading}
-              className="flex-1 px-4 py-2.5 border border-[#e2e6ec] text-[13px] font-semibold text-[#5a6a7e] rounded-lg hover:bg-slate-50 disabled:opacity-50 transition-colors"
+              disabled={busy}
+              className="w-full px-4 py-2.5 border border-[#e2e6ec] text-[13px] font-semibold text-[#5a6a7e] rounded-lg hover:bg-slate-50 disabled:opacity-50 transition-colors"
             >
               キャンセル
             </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex-1 px-4 py-2.5 bg-[#1e3a5f] hover:bg-[#16304f] disabled:opacity-50 text-white text-[13px] font-semibold rounded-lg transition-colors"
-            >
-              {loading ? '生成中…' : '招待URLを生成'}
-            </button>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   )
