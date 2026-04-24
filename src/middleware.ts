@@ -50,7 +50,12 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // 静的ファイル・画像・faviconはスキップ
-    '/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    /*
+     * 以下を除くすべてのパスにミドルウェアを適用:
+     * - _next/static  (静的ファイル)
+     * - _next/image   (画像最適化)
+     * - favicon.ico
+     */
+    '/((?!_next/static|_next/image|favicon\\.ico).*)',
   ],
 }
