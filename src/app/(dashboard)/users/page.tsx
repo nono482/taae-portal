@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { cn } from '@/lib/utils'
-import { getUsers, deleteUserRecord, inviteUser, inviteUserByEmail, type UserRow } from '@/app/actions/users'
+import { getUsers, deleteUserRecord, inviteUser, inviteUserByEmail, updateUserRole, regenerateInviteUrl, type UserRow } from '@/app/actions/users'
 
 // ─── ロール設定 ───────────────────────────────────────────
 const ROLE_CFG: Record<string, { label: string; cls: string }> = {
@@ -355,6 +355,10 @@ export default function UsersPage() {
   const [deleting, setDeleting]     = useState(false)
   const [showInvite, setShowInvite] = useState(false)
   const [toast, setToast]           = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
+  const [roleChanging, setRoleChanging] = useState<Set<string>>(new Set())
+  const [regenLoading, setRegenLoading] = useState<string | null>(null)
+  const [regenResult,  setRegenResult]  = useState<{ url: string } | null>(null)
+  const [regenCopied,  setRegenCopied]  = useState(false)
 
   const isAdmin = myRole === 'admin'
 
@@ -387,6 +391,31 @@ export default function UsersPage() {
       showToast(`削除失敗: ${result.error}`, 'error')
     } else {
       showToast(`${deleteTarget.display_name} さんを削除しました`)
+      await load()
+    }
+  }
+
+  async function handleRoleChange(userId: string, newRole: string) {
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u))
+    setRoleChanging(prev => new Set(prev).add(userId))
+    const result = await updateUserRole(userId, newRole)
+    setRoleChanging(prev => { const s = new Set(prev); s.delete(userId); return s })
+    if (result.error) {
+      showToast(`権限変更失敗: ${result.error}`, 'error')
+      await load()
+    } else {
+      showToast('権限を変更しました')
+    }
+  }
+
+  async function handleRegenUrl(userId: string) {
+    setRegenLoading(userId)
+    const result = await regenerateInviteUrl(userId)
+    setRegenLoading(null)
+    if (result.error) {
+      showToast(`URL再生成失敗: ${result.error}`, 'error')
+    } else {
+      setRegenResult({ url: result.inviteUrl! })
       await load()
     }
   }
@@ -527,17 +556,39 @@ export default function UsersPage() {
 
                       {/* 権限 */}
                       <td className="px-5 py-3.5">
-                        <span className={cn('text-[11px] font-semibold px-2.5 py-1 rounded-full', roleCfg.cls)}>
-                          {roleCfg.label}
-                        </span>
+                        {isAdmin && !isMe ? (
+                          <div className="relative inline-block">
+                            <select
+                              value={u.role}
+                              onChange={e => handleRoleChange(u.id, e.target.value)}
+                              disabled={roleChanging.has(u.id)}
+                              className={cn(
+                                'text-[11px] font-semibold pl-2.5 pr-6 py-1 rounded-full appearance-none cursor-pointer border-0 outline-none transition-opacity',
+                                roleCfg.cls,
+                                roleChanging.has(u.id) && 'opacity-50 cursor-wait'
+                              )}
+                            >
+                              {Object.entries(ROLE_CFG).map(([key, cfg]) => (
+                                <option key={key} value={key}>{cfg.label}</option>
+                              ))}
+                            </select>
+                            <svg className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 pointer-events-none opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </div>
+                        ) : (
+                          <span className={cn('text-[11px] font-semibold px-2.5 py-1 rounded-full', roleCfg.cls)}>
+                            {roleCfg.label}
+                          </span>
+                        )}
                       </td>
 
                       {/* ステータス */}
                       <td className="px-5 py-3.5">
                         <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold">
-                          <span className={cn('w-1.5 h-1.5 rounded-full', u.is_active ? 'bg-green-500' : 'bg-slate-300')} />
-                          <span className={u.is_active ? 'text-green-700' : 'text-slate-500'}>
-                            {u.is_active ? 'アクティブ' : '無効'}
+                          <span className={cn('w-1.5 h-1.5 rounded-full', u.is_active ? 'bg-green-500' : 'bg-amber-400')} />
+                          <span className={u.is_active ? 'text-green-700' : 'text-amber-600'}>
+                            {u.is_active ? 'アクティブ' : '招待中'}
                           </span>
                         </span>
                       </td>
@@ -552,16 +603,36 @@ export default function UsersPage() {
                         {isMe ? (
                           <span className="text-[11px] text-[#8f9db0]">—</span>
                         ) : isAdmin ? (
-                          <button
-                            onClick={() => setDeleteTarget(u)}
-                            className="inline-flex items-center gap-1 text-[12px] font-semibold text-red-500 hover:text-red-700 hover:bg-red-50 px-2.5 py-1 rounded-lg transition-colors"
-                          >
-                            {/* ゴミ箱アイコン */}
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                            </svg>
-                            削除
-                          </button>
+                          <div className="inline-flex items-center justify-end gap-1.5">
+                            {/* 招待中ユーザーにURL再生成ボタン */}
+                            {!u.is_active && (
+                              <button
+                                onClick={() => handleRegenUrl(u.id)}
+                                disabled={regenLoading === u.id}
+                                className="inline-flex items-center gap-1 text-[12px] font-semibold text-blue-600 hover:text-blue-800 hover:bg-blue-50 px-2.5 py-1 rounded-lg transition-colors disabled:opacity-40"
+                              >
+                                {regenLoading === u.id ? (
+                                  <span>生成中…</span>
+                                ) : (
+                                  <>
+                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                                    </svg>
+                                    URL再生成
+                                  </>
+                                )}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => setDeleteTarget(u)}
+                              className="inline-flex items-center gap-1 text-[12px] font-semibold text-red-500 hover:text-red-700 hover:bg-red-50 px-2.5 py-1 rounded-lg transition-colors"
+                            >
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                              </svg>
+                              削除
+                            </button>
+                          </div>
                         ) : (
                           <span className="text-[11px] text-[#8f9db0]">—</span>
                         )}
@@ -608,6 +679,54 @@ export default function UsersPage() {
           onConfirm={handleDeleteConfirm}
           deleting={deleting}
         />
+      )}
+
+      {/* 招待URL再生成結果モーダル */}
+      {regenResult && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => { setRegenResult(null); setRegenCopied(false) }}
+        >
+          <div
+            className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-6 pt-6 pb-4 border-b border-[#e2e6ec]">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-4 h-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="text-[15px] font-bold text-[#1a2332]">招待URLを再生成しました</div>
+                  <div className="text-[12px] text-[#8f9db0] mt-0.5">URLは1回のみ有効です</div>
+                </div>
+              </div>
+            </div>
+            <div className="px-6 py-5 space-y-3">
+              <div className="text-[12px] font-semibold text-[#5a6a7e]">招待URL</div>
+              <div className="bg-slate-50 border border-[#e2e6ec] rounded-lg px-3 py-2.5 text-[11px] font-mono break-all text-[#5a6a7e] leading-relaxed select-all">
+                {regenResult.url}
+              </div>
+              <button
+                onClick={() => { navigator.clipboard.writeText(regenResult.url); setRegenCopied(true) }}
+                className={cn(
+                  'w-full py-2.5 text-[13px] font-semibold rounded-lg transition-colors',
+                  regenCopied ? 'bg-green-600 text-white' : 'bg-[#1e3a5f] hover:bg-[#16304f] text-white'
+                )}
+              >
+                {regenCopied ? 'コピーしました ✓' : 'URLをコピー'}
+              </button>
+              <button
+                onClick={() => { setRegenResult(null); setRegenCopied(false) }}
+                className="w-full py-2.5 border border-[#e2e6ec] text-[13px] font-semibold text-[#5a6a7e] rounded-lg hover:bg-slate-50 transition-colors"
+              >
+                閉じる
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Toast */}

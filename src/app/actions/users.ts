@@ -162,3 +162,83 @@ export async function inviteUserByEmail(
   revalidatePath('/users')
   return { success: true }
 }
+
+// ─── ユーザーロール変更 ───────────────────────────────────
+export async function updateUserRole(
+  targetUserId: string,
+  newRole: string,
+): Promise<{ success?: true; error?: string }> {
+  const { db, user: me, tenantId, role: myRole } = await getCtx()
+
+  if (!me || !tenantId) return { error: '未認証です' }
+  if (myRole !== 'admin') return { error: '管理者権限が必要です' }
+  if (targetUserId === me.id) return { error: '自分自身の権限は変更できません' }
+
+  const valid = ['admin', 'member', 'accountant']
+  if (!valid.includes(newRole)) return { error: '無効なロールです' }
+
+  const { error } = await db
+    .from('users')
+    .update({ role: newRole })
+    .eq('id', targetUserId)
+    .eq('tenant_id', tenantId)
+
+  if (error) return { error: error.message }
+
+  revalidatePath('/users')
+  return { success: true }
+}
+
+// ─── 招待URL再生成 ────────────────────────────────────────
+export async function regenerateInviteUrl(
+  targetUserId: string,
+): Promise<{ success?: true; inviteUrl?: string; error?: string }> {
+  const { db, user: me, tenantId, role: myRole } = await getCtx()
+
+  if (!me || !tenantId) return { error: '未認証です' }
+  if (myRole !== 'admin') return { error: '管理者権限が必要です' }
+
+  const { data: target, error: fetchErr } = await db
+    .from('users')
+    .select('email, display_name, role, is_active')
+    .eq('id', targetUserId)
+    .eq('tenant_id', tenantId)
+    .single()
+
+  if (fetchErr || !target) return { error: 'ユーザーが見つかりません' }
+  if (target.is_active) return { error: 'すでにアクティブなユーザーです' }
+
+  let adminClient: ReturnType<typeof createAdminClient>
+  try {
+    adminClient = createAdminClient()
+  } catch {
+    return { error: 'サービスロールキーが設定されていません' }
+  }
+
+  await adminClient.auth.admin.deleteUser(targetUserId)
+  await db.from('users').delete().eq('id', targetUserId)
+
+  const { data, error: genErr } = await adminClient.auth.admin.generateLink({
+    type: 'invite',
+    email: target.email,
+    options: {
+      data: { display_name: target.display_name, tenant_id: tenantId, role: target.role },
+      redirectTo: CALLBACK_URL,
+    },
+  })
+  if (genErr) return { error: genErr.message }
+
+  const { error: insertErr } = await db.from('users').insert({
+    id:           data.user.id,
+    email:        target.email,
+    display_name: target.display_name,
+    tenant_id:    tenantId,
+    role:         target.role,
+    is_active:    false,
+  })
+  if (insertErr) return { error: insertErr.message }
+
+  revalidatePath('/users')
+  const encoded = Buffer.from(data.properties.action_link).toString('base64url')
+  return { success: true, inviteUrl: `https://taae-portal.vercel.app/invite#${encoded}` }
+}
