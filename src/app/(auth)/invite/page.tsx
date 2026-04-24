@@ -12,8 +12,9 @@ export default function InviteLandingPage() {
     if (!hash) { setInvalid(true); return }
 
     try {
-      // base64url → 元の Supabase action_link
-      const decoded = Buffer.from(hash, 'base64').toString('utf-8')
+      // base64url → 標準 base64 → atob（Buffer は使わない。ブラウザ非対応のため）
+      const std = hash.replace(/-/g, '+').replace(/_/g, '/')
+      const decoded = atob(std)
       if (decoded.startsWith('https://') && decoded.includes('/auth/v1/verify')) {
         setActionLink(decoded)
       } else {
