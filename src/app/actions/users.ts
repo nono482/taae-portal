@@ -139,5 +139,11 @@ export async function inviteUser(
   if (dbError) return { error: dbError.message }
 
   revalidatePath('/users')
-  return { success: true, inviteUrl: data.properties.action_link }
+
+  // action_link をそのまま渡すとボット（facebookexternalhit 等）が
+  // URLをプレビュー取得した時点でトークンを消費してしまう。
+  // ハッシュフラグメントは HTTP リクエストに含まれないため、
+  // /invite#[base64] 形式の中継URLにするとボットが Supabase 検証 URL に到達できない。
+  const encoded = Buffer.from(data.properties.action_link).toString('base64url')
+  return { success: true, inviteUrl: `https://taae-portal.vercel.app/invite#${encoded}` }
 }
