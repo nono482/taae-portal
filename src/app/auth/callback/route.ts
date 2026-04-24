@@ -10,11 +10,14 @@ export async function GET(request: NextRequest) {
   const code       = searchParams.get('code')
   const token_hash = searchParams.get('token_hash')
   const type       = searchParams.get('type') as 'invite' | 'recovery' | 'signup' | 'email' | null
+
+  // 受け取ったパラメータを全件ログ（Vercel でどれが来ているか確認用）
+  console.log('[callback] 受信パラメータ:', Object.fromEntries(searchParams.entries()))
   console.log('[callback] code:', code ? '✓' : 'none')
   console.log('[callback] token_hash:', token_hash ? '✓' : 'none')
   console.log('[callback] type:', type ?? 'none')
 
-  // Collect cookies that Supabase wants to set, then apply them to the redirect response
+  // Supabase がセットしたい Cookie を収集し、実際に返すレスポンスに付与する
   const pendingCookies: Array<{ name: string; value: string; options: Record<string, unknown> }> = []
 
   const supabase = createServerClient(
@@ -40,8 +43,9 @@ export async function GET(request: NextRequest) {
     return res
   }
 
-  // ── PKCE フロー（code）──────────────────────────────────
+  // ── PKCE フロー（?code=xxx）─────────────────────────────
   if (code) {
+    console.log('[callback] PKCE フロー: exchangeCodeForSession 開始')
     const { error } = await supabase.auth.exchangeCodeForSession(code)
     if (error) {
       console.error('[callback] exchangeCodeForSession 失敗:', error.message)
@@ -51,18 +55,36 @@ export async function GET(request: NextRequest) {
     return makeRedirect('/update-password')
   }
 
-  // ── OTP / token_hash フロー ─────────────────────────────
+  // ── OTP フロー（?token_hash=xxx&type=invite）────────────
   if (token_hash && type) {
+    console.log('[callback] OTP フロー: verifyOtp 開始 type=', type)
     const { error } = await supabase.auth.verifyOtp({ token_hash, type })
     if (error) {
-      console.error('[callback] verifyOtp 失敗:', error.message)
+      console.error('[callback] verifyOtp 失敗 type=', type, 'error=', error.message)
       return NextResponse.redirect(`${BASE}/login?error=invite_invalid`)
     }
     console.log('[callback] OTP 成功 → /update-password')
     return makeRedirect('/update-password')
   }
 
-  // ── どちらも来なかった ──────────────────────────────────
-  console.error('[callback] code も token_hash も未着')
-  return NextResponse.redirect(`${BASE}/login?error=invite_invalid`)
+  // ── パラメータなし → implicit flow（#access_token=xxx）の可能性 ──
+  // ハッシュフラグメントはサーバーに届かない。
+  // JS が動く HTML を返してブラウザ側でハッシュを読ませ、/update-password へ転送する。
+  console.log('[callback] code も token_hash も未着 → implicit flow を試みる')
+  return new Response(
+    `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>認証中...</title></head>
+<body>
+<script>
+  var h = window.location.hash.slice(1)
+  console.log('[callback-html] hash params:', h ? h.split('&').map(function(p){ return p.split('=')[0] }).join(',') : 'none')
+  if (h && h.indexOf('access_token') !== -1) {
+    window.location.replace('/update-password#' + h)
+  } else {
+    window.location.replace('/login?error=invite_invalid')
+  }
+</script>
+</body></html>`,
+    { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+  )
 }

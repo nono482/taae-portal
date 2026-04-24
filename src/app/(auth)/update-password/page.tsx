@@ -13,19 +13,36 @@ export default function UpdatePasswordPage() {
 
   useEffect(() => {
     const supabase = createClient()
+    let hasSession = false
 
-    // onAuthStateChange fires immediately with the current session (if any),
-    // then again whenever the session changes. This avoids the race condition
-    // where getSession() is called before cookies from /auth/callback arrive.
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    // onAuthStateChange は非同期で発火する。
+    // implicit flow（#access_token=...）の場合：
+    //   1. INITIAL_SESSION(null) が先に来る（まだ hash 未処理）
+    //   2. その後 SIGNED_IN(session) が来る（hash 処理完了）
+    // → INITIAL_SESSION(null) で即リダイレクトしてはいけない。
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log('[update-password] auth event:', event, 'session:', session ? '✓' : 'null')
       if (session) {
+        hasSession = true
         setReady(true)
-      } else {
+      } else if (event === 'SIGNED_OUT') {
         window.location.href = '/login'
       }
+      // INITIAL_SESSION(null) はスルー。タイムアウトで後処理する。
     })
 
-    return () => subscription.unsubscribe()
+    // 5秒待ってもセッションが取れなければ諦めてログインへ
+    const timer = setTimeout(() => {
+      if (!hasSession) {
+        console.log('[update-password] タイムアウト → /login')
+        window.location.href = '/login'
+      }
+    }, 5000)
+
+    return () => {
+      subscription.unsubscribe()
+      clearTimeout(timer)
+    }
   }, [])
 
   async function handleSubmit(e: React.FormEvent) {
@@ -52,7 +69,16 @@ export default function UpdatePasswordPage() {
     }
   }
 
-  if (!ready) return null
+  if (!ready) {
+    return (
+      <div className="min-h-screen bg-[#f4f6f9] flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <div className="w-10 h-10 rounded-full bg-slate-200 animate-pulse mx-auto" />
+          <p className="text-sm text-[#8f9db0]">認証を確認しています…</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-[#f4f6f9] flex items-center justify-center">
