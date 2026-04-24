@@ -76,7 +76,7 @@ export async function inviteUser(
   email: string,
   displayName: string,
   role: string,
-): Promise<{ success?: true; error?: string }> {
+): Promise<{ success?: true; inviteUrl?: string; error?: string }> {
   const { db, user: me, tenantId, role: myRole } = await getCtx()
 
   if (!me || !tenantId) return { error: '未認証です' }
@@ -112,14 +112,15 @@ export async function inviteUser(
     await db.from('users').delete().eq('id', existingAuthUser.id)
   }
 
-  // Auth ユーザーを作成して招待メールを送信
-  const { data, error: authError } = await adminClient.auth.admin.inviteUserByEmail(
-    trimmedEmail,
-    {
+  // メール送信なしで招待URLのみ生成（テスト用）
+  const { data, error: authError } = await adminClient.auth.admin.generateLink({
+    type: 'invite',
+    email: trimmedEmail,
+    options: {
       data: { display_name: name, tenant_id: tenantId, role },
       redirectTo: `${appUrl}/auth/callback?next=/update-password`,
     },
-  )
+  })
   if (authError) return { error: authError.message }
 
   // users テーブルに招待済みレコードを挿入（is_active: false）
@@ -139,5 +140,5 @@ export async function inviteUser(
   if (dbError) return { error: dbError.message }
 
   revalidatePath('/users')
-  return { success: true }
+  return { success: true, inviteUrl: data.properties.action_link }
 }

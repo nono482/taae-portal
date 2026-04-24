@@ -44,6 +44,8 @@ function InviteModal({
   const [role,        setRole]        = useState('member')
   const [loading,     setLoading]     = useState(false)
   const [error,       setError]       = useState<string | null>(null)
+  const [inviteUrl,   setInviteUrl]   = useState<string | null>(null)
+  const [copied,      setCopied]      = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -54,11 +56,72 @@ function InviteModal({
     if (result.error) {
       setError(result.error)
     } else {
-      onInvited(`${email} に招待メールを送信しました`)
-      onClose()
+      onInvited(`${email} の招待URLを生成しました`)
+      setInviteUrl(result.inviteUrl ?? null)
     }
   }
 
+  async function handleCopy() {
+    if (!inviteUrl) return
+    await navigator.clipboard.writeText(inviteUrl)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  // ── URL生成済み画面 ─────────────────────────────────────
+  if (inviteUrl) {
+    return (
+      <div
+        className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+        onClick={onClose}
+      >
+        <div
+          className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden"
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="px-6 pt-6 pb-4 border-b border-[#e2e6ec]">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
+                <svg className="w-4 h-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <div>
+                <div className="text-[15px] font-bold text-[#1a2332]">招待URLを生成しました</div>
+                <div className="text-[12px] text-[#8f9db0] mt-0.5">{email}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-6 py-5 space-y-3">
+            <div className="text-[12px] font-semibold text-[#5a6a7e]">招待URL（テスト用・1回のみ有効）</div>
+            <div className="bg-slate-50 border border-[#e2e6ec] rounded-lg px-3 py-2.5 text-[11px] text-[#5a6a7e] break-all leading-relaxed font-mono select-all">
+              {inviteUrl}
+            </div>
+            <button
+              onClick={handleCopy}
+              className={cn(
+                'w-full py-2.5 text-[13px] font-semibold rounded-lg transition-colors',
+                copied
+                  ? 'bg-green-600 text-white'
+                  : 'bg-[#1e3a5f] hover:bg-[#16304f] text-white',
+              )}
+            >
+              {copied ? 'コピーしました ✓' : 'URLをコピー'}
+            </button>
+            <button
+              onClick={onClose}
+              className="w-full py-2.5 border border-[#e2e6ec] text-[13px] font-semibold text-[#5a6a7e] rounded-lg hover:bg-slate-50 transition-colors"
+            >
+              閉じる
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ── フォーム画面 ────────────────────────────────────────
   return (
     <div
       className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
@@ -73,7 +136,7 @@ function InviteModal({
           <div className="flex items-center justify-between">
             <div>
               <div className="text-[15px] font-bold text-[#1a2332]">メンバーを招待</div>
-              <div className="text-[12px] text-[#8f9db0] mt-0.5">招待メールが指定のアドレスに送信されます</div>
+              <div className="text-[12px] text-[#8f9db0] mt-0.5">招待URLを生成します（メール送信なし）</div>
             </div>
             <button
               onClick={onClose}
@@ -154,7 +217,7 @@ function InviteModal({
               disabled={loading}
               className="flex-1 px-4 py-2.5 bg-[#1e3a5f] hover:bg-[#16304f] disabled:opacity-50 text-white text-[13px] font-semibold rounded-lg transition-colors"
             >
-              {loading ? '送信中…' : '招待メールを送信'}
+              {loading ? '生成中…' : '招待URLを生成'}
             </button>
           </div>
         </form>
