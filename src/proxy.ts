@@ -14,9 +14,28 @@ const supabaseReady =
   !SUPABASE_KEY.includes('placeholder') &&
   !SUPABASE_KEY.includes('dummy')
 
+// 未ログインでもアクセスできる公開ルート
+const PUBLIC_PATHS = [
+  '/login',
+  '/signup',
+  '/invite',
+  '/update-password',
+  '/auth',          // /auth/callback を含む
+]
+
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname
-  const isAuthPage = pathname.startsWith('/login') || pathname.startsWith('/signup')
+
+  const isPublic = PUBLIC_PATHS.some(
+    p => pathname === p || pathname.startsWith(p + '/'),
+  )
+
+  console.log(`[proxy] pathname="${pathname}" isPublic=${isPublic}`)
+
+  // 公開ルートはそのまま通過
+  if (isPublic) {
+    return NextResponse.next()
+  }
 
   // Supabase未設定時はそのまま通過
   if (!supabaseReady) {
@@ -40,15 +59,10 @@ export async function proxy(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  if (!user && !isAuthPage) {
+  if (!user) {
+    console.log(`[proxy] NO USER → redirect /login`)
     const url = request.nextUrl.clone()
     url.pathname = '/login'
-    return NextResponse.redirect(url)
-  }
-
-  if (user && isAuthPage) {
-    const url = request.nextUrl.clone()
-    url.pathname = '/dashboard'
     return NextResponse.redirect(url)
   }
 
