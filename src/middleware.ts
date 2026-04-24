@@ -11,9 +11,16 @@ const PUBLIC_PATHS = [
 ]
 
 export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl
+  const pathname = request.nextUrl.pathname
 
-  if (PUBLIC_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))) {
+  const isPublic = PUBLIC_PATHS.some(
+    path => pathname === path || pathname.startsWith(path + '/'),
+  )
+
+  console.log(`[middleware] pathname="${pathname}" isPublic=${isPublic}`)
+
+  if (isPublic) {
+    console.log(`[middleware] PUBLIC → NextResponse.next()`)
     return NextResponse.next()
   }
 
@@ -42,9 +49,11 @@ export async function middleware(request: NextRequest) {
   const { data: { session } } = await supabase.auth.getSession()
 
   if (!session) {
+    console.log(`[middleware] NO SESSION → redirect /login`)
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
+  console.log(`[middleware] session OK → NextResponse.next()`)
   return response
 }
 
