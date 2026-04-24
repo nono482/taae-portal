@@ -10,13 +10,9 @@ export async function GET(request: NextRequest) {
   const code       = searchParams.get('code')
   const token_hash = searchParams.get('token_hash')
   const type       = searchParams.get('type') as 'invite' | 'recovery' | 'signup' | 'email' | null
-  const rawNext    = searchParams.get('next') ?? ''
-  const next       = rawNext.startsWith('/') ? rawNext : '/dashboard'
-
   console.log('[callback] code:', code ? '✓' : 'none')
   console.log('[callback] token_hash:', token_hash ? '✓' : 'none')
   console.log('[callback] type:', type ?? 'none')
-  console.log('[callback] next:', next)
 
   // Collect cookies that Supabase wants to set, then apply them to the redirect response
   const pendingCookies: Array<{ name: string; value: string; options: Record<string, unknown> }> = []
@@ -51,9 +47,8 @@ export async function GET(request: NextRequest) {
       console.error('[callback] exchangeCodeForSession 失敗:', error.message)
       return NextResponse.redirect(`${BASE}/login?error=invite_invalid`)
     }
-    const dest = type === 'invite' ? '/update-password' : next
-    console.log('[callback] PKCE 成功 →', dest)
-    return makeRedirect(dest)
+    console.log('[callback] PKCE 成功 → /update-password')
+    return makeRedirect('/update-password')
   }
 
   // ── OTP / token_hash フロー ─────────────────────────────
@@ -63,9 +58,8 @@ export async function GET(request: NextRequest) {
       console.error('[callback] verifyOtp 失敗:', error.message)
       return NextResponse.redirect(`${BASE}/login?error=invite_invalid`)
     }
-    const dest = type === 'invite' ? '/update-password' : next
-    console.log('[callback] OTP 成功 →', dest)
-    return makeRedirect(dest)
+    console.log('[callback] OTP 成功 → /update-password')
+    return makeRedirect('/update-password')
   }
 
   // ── どちらも来なかった ──────────────────────────────────

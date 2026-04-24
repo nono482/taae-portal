@@ -117,7 +117,7 @@ export async function inviteUser(
     email: trimmedEmail,
     options: {
       data: { display_name: name, tenant_id: tenantId, role },
-      redirectTo: 'https://taae-portal.vercel.app/auth/callback?next=/update-password',
+      redirectTo: 'https://taae-portal.vercel.app/auth/callback',
     },
   })
   if (authError) return { error: authError.message }
