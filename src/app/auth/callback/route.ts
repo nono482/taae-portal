@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 export async function GET(request: NextRequest) {
-  const { searchParams, origin } = new URL(request.url)
+  const { searchParams } = new URL(request.url)
   const token_hash = searchParams.get('token_hash')
   const type       = searchParams.get('type') as 'invite' | 'recovery' | 'signup' | 'email' | null
 
@@ -12,33 +12,44 @@ export async function GET(request: NextRequest) {
   const rawNext = searchParams.get('next') ?? ''
   const next    = rawNext.startsWith('/') ? rawNext : '/dashboard'
 
-  if (token_hash && type) {
-    const cookieStore = await cookies()
+  // origin はリクエストURLから導出せず本番URLで固定
+  const BASE = 'https://taae-portal.vercel.app'
 
-    const supabase = createServerClient(
-      (process.env.NEXT_PUBLIC_SUPABASE_URL  ?? '').trim(),
-      (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '').trim(),
-      {
-        cookies: {
-          getAll()              { return cookieStore.getAll() },
-          setAll(cookiesToSet) {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            )
-          },
-        },
-      },
-    )
+  console.log('[callback] token_hash:', token_hash ? '✓' : 'MISSING')
+  console.log('[callback] type:', type ?? 'MISSING')
+  console.log('[callback] next:', next)
 
-    const { error } = await supabase.auth.verifyOtp({ token_hash, type })
-
-    if (!error) {
-      // type=invite は next（=/update-password）を優先、それ以外は next か /dashboard
-      const dest = type === 'invite' ? (next || '/update-password') : next
-      return NextResponse.redirect(new URL(dest, origin))
-    }
+  if (!token_hash || !type) {
+    console.error('[callback] token_hash または type が未着 → /login へ')
+    return NextResponse.redirect(`${BASE}/login?error=invite_invalid`)
   }
 
-  // トークン不正 or 期限切れ → ログインへ
-  return NextResponse.redirect(new URL('/login?error=invite_invalid', origin))
+  const cookieStore = await cookies()
+
+  const supabase = createServerClient(
+    (process.env.NEXT_PUBLIC_SUPABASE_URL  ?? '').trim(),
+    (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '').trim(),
+    {
+      cookies: {
+        getAll()              { return cookieStore.getAll() },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }) =>
+            cookieStore.set(name, value, options)
+          )
+        },
+      },
+    },
+  )
+
+  const { error } = await supabase.auth.verifyOtp({ token_hash, type })
+
+  if (error) {
+    console.error('[callback] verifyOtp 失敗:', error.message)
+    return NextResponse.redirect(`${BASE}/login?error=invite_invalid`)
+  }
+
+  // type=invite は next（=/update-password）へ、それ以外も next へ
+  const dest = type === 'invite' ? (next || '/update-password') : next
+  console.log('[callback] verifyOtp 成功 → リダイレクト先:', dest)
+  return NextResponse.redirect(`${BASE}${dest}`)
 }

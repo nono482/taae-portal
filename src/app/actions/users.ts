@@ -88,7 +88,6 @@ export async function inviteUser(
   }
 
   const name = displayName.trim() || trimmedEmail.split('@')[0]
-  const appUrl = (process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000').trim()
 
   let adminClient: ReturnType<typeof createAdminClient>
   try {
@@ -118,7 +117,7 @@ export async function inviteUser(
     email: trimmedEmail,
     options: {
       data: { display_name: name, tenant_id: tenantId, role },
-      redirectTo: `${appUrl}/auth/callback?next=/update-password`,
+      redirectTo: 'https://taae-portal.vercel.app/auth/callback?next=/update-password',
     },
   })
   if (authError) return { error: authError.message }
