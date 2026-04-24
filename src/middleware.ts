@@ -2,27 +2,9 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
-// 未ログインでもアクセスできる公開ルート
-const PUBLIC_PATHS = [
-  '/login',
-  '/invite',
-  '/update-password',
-  '/auth/callback',
-]
-
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname
-
-  const isPublic = PUBLIC_PATHS.some(
-    path => pathname === path || pathname.startsWith(path + '/'),
-  )
-
-  console.log(`[middleware] pathname="${pathname}" isPublic=${isPublic}`)
-
-  if (isPublic) {
-    console.log(`[middleware] PUBLIC → NextResponse.next()`)
-    return NextResponse.next()
-  }
+  console.log(`[middleware] running for: "${pathname}"`)
 
   const response = NextResponse.next({
     request: { headers: request.headers },
@@ -53,18 +35,25 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  console.log(`[middleware] session OK → NextResponse.next()`)
+  console.log(`[middleware] session OK → pass through`)
   return response
 }
 
+// ─── matcher: 保護が必要なルートだけを列挙 ───────────────
+// /login, /invite, /update-password, /auth/callback は
+// ここに含めないことで middleware が一切触れない。
 export const config = {
   matcher: [
-    /*
-     * 以下を除くすべてのパスにミドルウェアを適用:
-     * - _next/static  (静的ファイル)
-     * - _next/image   (画像最適化)
-     * - favicon.ico
-     */
-    '/((?!_next/static|_next/image|favicon\\.ico).*)',
+    '/dashboard/:path*',
+    '/banking/:path*',
+    '/contractors/:path*',
+    '/expenses/:path*',
+    '/export/:path*',
+    '/notifications/:path*',
+    '/outsourcing/:path*',
+    '/payroll/:path*',
+    '/reports/:path*',
+    '/settings/:path*',
+    '/users/:path*',
   ],
 }
