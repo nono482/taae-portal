@@ -30,8 +30,9 @@ interface PayrollRecord {
 function PayrollModal({ emp, rec, onClose }: {
   emp: Employee; rec: PayrollRecord | null; onClose: () => void
 }) {
+  // 常に現在の従業員マスタの base_salary で再計算する（DB記録値は使わない）
   const result = calculatePayroll({
-    baseSalary:   rec?.base_salary ?? emp.base_salary,
+    baseSalary:   emp.base_salary,
     allowances:   rec?.allowances ?? 0,
     dependents:   emp.dependents,
     taxTable:     (emp.tax_table ?? 'A') as 'A' | 'B',
@@ -52,7 +53,7 @@ function PayrollModal({ emp, rec, onClose }: {
           <div>
             <div className="text-[11px] font-bold text-[#8f9db0] uppercase tracking-wide mb-2">支給</div>
             <div className="bg-slate-50 rounded-lg overflow-hidden">
-              {[['基本給', rec?.base_salary ?? emp.base_salary], ['各種手当', rec?.allowances ?? 0]].map(([l, v]) => (
+              {[['基本給', emp.base_salary], ['各種手当', rec?.allowances ?? 0]].map(([l, v]) => (
                 <div key={l as string} className="flex justify-between px-4 py-2.5 border-b border-[#e2e6ec] last:border-0">
                   <span className="text-[13px] text-[#5a6a7e]">{l}</span>
                   <span className="text-[13px] font-semibold font-mono">{formatYen(v as number)}</span>
@@ -177,10 +178,12 @@ export default function PayrollPage() {
     const { employees: emps, records: recs } = await getPayrollData(NOW_MONTH)
     setEmployees(emps as Employee[])
     setRecords(recs as PayrollRecord[])
-    // 従業員はいるがレコードがない場合、自動作成
-    if (emps.length > 0 && recs.length === 0) {
+    // 従業員がいれば常に ensurePayrollRecords を呼ぶ
+    // （新規作成 + 基本給が変わったレコードの更新を行う）
+    if (emps.length > 0) {
       await ensurePayrollRecords(NOW_MONTH)
       const updated = await getPayrollData(NOW_MONTH)
+      setEmployees(updated.employees as Employee[])
       setRecords(updated.records as PayrollRecord[])
     }
     setLoading(false)
@@ -216,19 +219,27 @@ export default function PayrollPage() {
     setTimeout(() => setToast(''), 3000)
   }
 
-  // 集計（レコードあればレコード値、なければ計算値）
+  // 常に現在の従業員マスタの base_salary で再計算する
+  // rec はallow ances・residence_tax など手動入力分のみ参照
   const summaries = employees.map(emp => {
-    const rec = getRecord(emp.id)
-    const calc = calculatePayroll({ baseSalary: emp.base_salary, allowances: rec?.allowances ?? 0, dependents: emp.dependents, taxTable: (emp.tax_table ?? 'A') as 'A' | 'B', age: 30, residenceTax: rec?.residence_tax ?? 0 })
+    const rec  = getRecord(emp.id)
+    const calc = calculatePayroll({
+      baseSalary:   emp.base_salary,
+      allowances:   rec?.allowances   ?? 0,
+      dependents:   emp.dependents,
+      taxTable:     (emp.tax_table    ?? 'A') as 'A' | 'B',
+      age:          30,
+      residenceTax: rec?.residence_tax ?? 0,
+    })
     return {
       emp, rec,
-      grossPay:      rec ? rec.base_salary + (rec.allowances ?? 0) : calc.grossPay,
-      healthIns:     rec?.health_ins ?? calc.healthIns,
-      pensionIns:    rec?.pension_ins ?? calc.pensionIns,
-      employmentIns: rec?.employment_ins ?? calc.employmentIns,
-      incomeTax:     rec?.income_tax ?? calc.incomeTax,
-      residenceTax:  rec?.residence_tax ?? 0,
-      netPay:        rec?.net_pay ?? calc.netPay,
+      grossPay:      calc.grossPay,
+      healthIns:     calc.healthIns + calc.nursingIns,
+      pensionIns:    calc.pensionIns,
+      employmentIns: calc.employmentIns,
+      incomeTax:     calc.incomeTax,
+      residenceTax:  calc.residenceTax,
+      netPay:        calc.netPay,
     }
   })
 

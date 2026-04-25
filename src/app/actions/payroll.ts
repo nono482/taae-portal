@@ -36,15 +36,14 @@ export async function getPayrollData(yearMonth: string) {
   }
 }
 
-// ─── 給与明細レコードを作成/取得 ──────────────────────────
+// ─── 給与明細レコードを作成/更新 ─────────────────────────
 export async function ensurePayrollRecords(yearMonth: string) {
   const { db, user, tenantId } = await getCtx()
   if (!user || !tenantId) return { error: '未認証' }
 
-  // 既存レコード確認
   const { data: existing } = await db
     .from('payroll_records')
-    .select('id, employee_id')
+    .select('id, employee_id, base_salary, allowances, residence_tax')
     .eq('tenant_id', tenantId)
     .eq('pay_year_month', yearMonth)
 
@@ -56,40 +55,73 @@ export async function ensurePayrollRecords(yearMonth: string) {
 
   if (!employees || employees.length === 0) return { error: '従業員が登録されていません' }
 
-  const existingIds = new Set((existing ?? []).map((r: any) => r.employee_id))
-  const toCreate = employees.filter((e: any) => !existingIds.has(e.id))
+  type ExistingRec = { id: string; employee_id: string; base_salary: number; allowances: number; residence_tax: number }
+  const existingMap = new Map<string, ExistingRec>(
+    (existing ?? []).map((r: any) => [r.employee_id as string, r as ExistingRec])
+  )
 
-  if (toCreate.length === 0) return { success: true, created: 0 }
+  // 新規作成が必要な従業員
+  const toCreate = (employees as any[]).filter(e => !existingMap.has(e.id))
 
-  const records = toCreate.map((emp: any) => {
-    const result = calculatePayroll({
-      baseSalary:    emp.base_salary,
-      allowances:    0,
-      dependents:    emp.dependents ?? 0,
-      taxTable:      (emp.tax_table ?? 'A') as 'A' | 'B',
-      age:           30, // デフォルト年齢（DB に age カラムがないため）
-      residenceTax:  0,
+  // base_salary が変わった既存レコードを更新
+  const toUpdate = (employees as any[]).filter(e => {
+    const rec = existingMap.get(e.id)
+    return rec && Number(rec.base_salary) !== Number(e.base_salary)
+  })
+
+  // 新規レコード作成
+  if (toCreate.length > 0) {
+    const records = toCreate.map((emp: any) => {
+      const result = calculatePayroll({
+        baseSalary:   emp.base_salary,
+        allowances:   0,
+        dependents:   emp.dependents ?? 0,
+        taxTable:     (emp.tax_table ?? 'A') as 'A' | 'B',
+        age:          30,
+        residenceTax: 0,
+      })
+      return {
+        tenant_id:      tenantId,
+        employee_id:    emp.id,
+        pay_year_month: yearMonth,
+        base_salary:    emp.base_salary,
+        allowances:     0,
+        health_ins:     result.healthIns + result.nursingIns,
+        pension_ins:    result.pensionIns,
+        employment_ins: result.employmentIns,
+        income_tax:     result.incomeTax,
+        residence_tax:  0,
+        net_pay:        result.netPay,
+      }
     })
-    return {
-      tenant_id:      tenantId,
-      employee_id:    emp.id,
-      pay_year_month: yearMonth,
+    const { error } = await db.from('payroll_records').insert(records)
+    if (error) return { error: error.message }
+  }
+
+  // 基本給が変わったレコードを更新（手当・住民税は保持）
+  for (const emp of toUpdate as any[]) {
+    const rec = existingMap.get(emp.id)!
+    const result = calculatePayroll({
+      baseSalary:   emp.base_salary,
+      allowances:   Number(rec.allowances)    || 0,
+      dependents:   emp.dependents            ?? 0,
+      taxTable:     (emp.tax_table            ?? 'A') as 'A' | 'B',
+      age:          30,
+      residenceTax: Number(rec.residence_tax) || 0,
+    })
+    const { error } = await db.from('payroll_records').update({
       base_salary:    emp.base_salary,
-      allowances:     0,
       health_ins:     result.healthIns + result.nursingIns,
       pension_ins:    result.pensionIns,
       employment_ins: result.employmentIns,
       income_tax:     result.incomeTax,
-      residence_tax:  result.residenceTax,
       net_pay:        result.netPay,
-    }
-  })
-
-  const { error } = await db.from('payroll_records').insert(records)
-  if (error) return { error: error.message }
+    }).eq('id', rec.id)
+    if (error) return { error: error.message }
+  }
 
   revalidatePath('/payroll')
-  return { success: true, created: records.length }
+  return { success: true, created: toCreate.length, updated: toUpdate.length }
 }
 
 // ─── 給与明細を「送信済」にマーク ─────────────────────────
