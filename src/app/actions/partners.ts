@@ -32,6 +32,7 @@ export type Partner = {
   bank_account_name: string | null
   standard_unit_price: number
   invoice_number: string | null
+  is_invoice_registered: boolean
   withholding_rate: number
   notes: string | null
   is_active: boolean
@@ -100,6 +101,7 @@ export async function createPartner(input: {
   bank_account_name?: string
   standard_unit_price?: number
   invoice_number?: string
+  is_invoice_registered?: boolean
   withholding_rate?: number
   notes?: string
 }) {
@@ -119,8 +121,9 @@ export async function createPartner(input: {
     bank_account_number: input.bank_account_number || null,
     bank_account_name:   input.bank_account_name   || null,
     standard_unit_price: input.standard_unit_price ?? 0,
-    invoice_number:      input.invoice_number      || null,
-    withholding_rate:    input.withholding_rate     ?? 0.1021,
+    invoice_number:         input.invoice_number          || null,
+    is_invoice_registered:  input.is_invoice_registered   ?? false,
+    withholding_rate:       input.withholding_rate         ?? 0.1021,
     notes:               input.notes               || null,
   }).select('id').single()
 

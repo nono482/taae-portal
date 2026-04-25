@@ -1,6 +1,11 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import {
+  calculateDeductibleTax,
+  getInvoiceTaxCode,
+  type ExportFormat as TaxFormat,
+} from '@/lib/tax'
 
 async function getCtx() {
   const supabase = await createClient()
@@ -19,11 +24,16 @@ function esc(v: string | number | null | undefined): string {
     : s
 }
 
-// ─── 税区分変換 ────────────────────────────────────────────
-function toTaxType(raw: string | undefined | null): string {
-  if (raw === 'taxed_8')  return '課税仕入8%（軽減）'
-  if (raw === 'exempt')   return '非課税仕入'
-  return '課税仕入10%'
+// ─── 税区分変換（インボイス経過措置対応）─────────────────────
+function toInvoiceTaxCode(
+  format: TaxFormat,
+  taxType: string | null | undefined,
+  amountIncludingTax: number,
+  isInvoiceRegistered: boolean,
+): { code: string; taxAmt: number } {
+  const calc = calculateDeductibleTax({ amountIncludingTax, isInvoiceRegistered })
+  const code = getInvoiceTaxCode(format, taxType, calc.status, calc.isMinorException)
+  return { code, taxAmt: calc.deductibleTax }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -90,7 +100,7 @@ function yayoiRow(
 }
 
 // ─── 型定義 ───────────────────────────────────────────────
-export type ExportFormat = 'mf' | 'freee' | 'yayoi'
+export type ExportFormat = TaxFormat
 export type ExportStatus = 'approved' | 'all'
 
 interface ExpenseRow {
@@ -164,34 +174,36 @@ export async function exportExpensesCSV(
   let header: string
   let bodyRows: string[]
 
+  // 経費は vendor 側のインボイス登録状況が不明なため、少額特例（<¥10,000）のみ自動判定し
+  // それ以外は登録済みとして扱う（export 時点でのデフォルト）
   if (format === 'freee') {
     header = FREEE_HEADER
     bodyRows = rows.map(e => {
       const acct   = e.category?.name ?? '雑費'
-      const taxStr = toTaxType(e.category?.tax_type)
-      const taxAmt = Number(e.tax_amount) || 0
+      const amt    = Number(e.amount)
+      const { code: taxStr, taxAmt } = toInvoiceTaxCode('freee', e.category?.tax_type, amt, true)
       const desc   = e.vendor_name + (e.memo ? ` ${e.memo}` : '')
-      return freeeRow(e.expense_date, acct, taxStr, Number(e.amount), taxAmt, '未払金', desc)
+      return freeeRow(e.expense_date, acct, taxStr, amt, taxAmt, '未払金', desc)
     })
   } else if (format === 'yayoi') {
     header = YAYOI_HEADER
     bodyRows = rows.map(e => {
       const acct   = e.category?.name ?? '雑費'
-      const taxStr = toTaxType(e.category?.tax_type)
-      const taxAmt = Number(e.tax_amount) || 0
+      const amt    = Number(e.amount)
+      const { code: taxStr, taxAmt } = toInvoiceTaxCode('yayoi', e.category?.tax_type, amt, true)
       const desc   = e.vendor_name + (e.memo ? ` ${e.memo}` : '')
-      return yayoiRow(e.expense_date, acct, taxStr, Number(e.amount), taxAmt, '未払金', desc)
+      return yayoiRow(e.expense_date, acct, taxStr, amt, taxAmt, '未払金', desc)
     })
   } else {
     // マネーフォワード (default)
     header = MF_HEADER
     bodyRows = rows.map(e => {
       const acct   = e.category?.name ?? '雑費'
-      const taxStr = toTaxType(e.category?.tax_type)
-      const taxAmt = Number(e.tax_amount) || 0
+      const amt    = Number(e.amount)
+      const { code: taxStr, taxAmt } = toInvoiceTaxCode('mf', e.category?.tax_type, amt, true)
       const desc   = e.vendor_name
       const memo   = e.memo ?? ''
-      return mfRow(e.expense_date, acct, taxStr, Number(e.amount), taxAmt, '未払金', Number(e.amount), desc, memo)
+      return mfRow(e.expense_date, acct, taxStr, amt, taxAmt, '未払金', amt, desc, memo)
     })
   }
 
@@ -233,26 +245,32 @@ export async function exportBankTransactionsCSV(
   if (format === 'freee') {
     header = FREEE_HEADER
     bodyRows = rows.map(t => {
+      const amt = Number(t.amount)
       if (t.direction === 'in') {
-        return freeeRow(t.transaction_date, '普通預金', '対象外', Number(t.amount), 0, '売上高', t.description)
+        return freeeRow(t.transaction_date, '普通預金', '対象外', amt, 0, '売上高', t.description)
       }
-      return freeeRow(t.transaction_date, '雑費', '課税仕入10%', Number(t.amount), Math.round(t.amount * 10 / 110), '普通預金', t.description)
+      const { code, taxAmt } = toInvoiceTaxCode('freee', null, amt, true)
+      return freeeRow(t.transaction_date, '雑費', code, amt, taxAmt, '普通預金', t.description)
     })
   } else if (format === 'yayoi') {
     header = YAYOI_HEADER
     bodyRows = rows.map(t => {
+      const amt = Number(t.amount)
       if (t.direction === 'in') {
-        return yayoiRow(t.transaction_date, '普通預金', '対象外', Number(t.amount), 0, '売上高', t.description)
+        return yayoiRow(t.transaction_date, '普通預金', '対象外', amt, 0, '売上高', t.description)
       }
-      return yayoiRow(t.transaction_date, '雑費', '課税仕入10%', Number(t.amount), Math.round(t.amount * 10 / 110), '普通預金', t.description)
+      const { code, taxAmt } = toInvoiceTaxCode('yayoi', null, amt, true)
+      return yayoiRow(t.transaction_date, '雑費', code, amt, taxAmt, '普通預金', t.description)
     })
   } else {
     header = MF_HEADER
     bodyRows = rows.map(t => {
+      const amt = Number(t.amount)
       if (t.direction === 'in') {
-        return mfRow(t.transaction_date, '普通預金', '対象外', Number(t.amount), 0, '売上高', Number(t.amount), t.description)
+        return mfRow(t.transaction_date, '普通預金', '対象外', amt, 0, '売上高', amt, t.description)
       }
-      return mfRow(t.transaction_date, '雑費', '課税仕入10%', Number(t.amount), Math.round(t.amount * 10 / 110), '普通預金', Number(t.amount), t.description)
+      const { code, taxAmt } = toInvoiceTaxCode('mf', null, amt, true)
+      return mfRow(t.transaction_date, '雑費', code, amt, taxAmt, '普通預金', amt, t.description)
     })
   }
 

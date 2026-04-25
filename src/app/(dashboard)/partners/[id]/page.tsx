@@ -4,18 +4,40 @@ import { useState, useEffect, useTransition, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { getPartner, updatePartner, deletePartner, type Partner } from '@/app/actions/partners'
+import { getPartner, updatePartner, type Partner } from '@/app/actions/partners'
 import {
   getWorkOrders, createWorkOrder, updateWorkOrderStatus, deleteWorkOrder,
   WORK_ORDER_STATUS, type WorkOrder,
 } from '@/app/actions/workOrders'
 import { getDocuments, createDocument, deleteDocument, type Document, type DocType } from '@/app/actions/documents'
+import {
+  calculateDeductibleTax,
+  getInvoiceStatus,
+  INVOICE_STATUS_LABEL,
+  INVOICE_STATUS_COLOR,
+} from '@/lib/tax'
 
 function formatYen(n: number) { return `¥${n.toLocaleString('ja-JP')}` }
 function formatDate(s: string | null) {
   if (!s) return '—'
   const [y, m, d] = s.split('-')
   return `${y}年${parseInt(m)}月${parseInt(d)}日`
+}
+
+// ─── 仕入税額控除バッジ ───────────────────────────────────
+function InvoiceBadge({ isRegistered, size = 'sm' }: { isRegistered: boolean; size?: 'sm' | 'lg' }) {
+  const status = getInvoiceStatus(isRegistered)
+  const color  = INVOICE_STATUS_COLOR[status]
+  const label  = INVOICE_STATUS_LABEL[status]
+  return (
+    <span className={cn(
+      'inline-flex items-center font-semibold rounded-full border',
+      size === 'lg' ? 'text-[12px] px-3 py-1' : 'text-[10px] px-2 py-0.5',
+      color,
+    )}>
+      {label}
+    </span>
+  )
 }
 
 // ─── DocumentPreviewModal ────────────────────────────────
@@ -32,56 +54,77 @@ function DocumentPreviewModal({
   onClose: () => void
   onIssued: () => void
 }) {
-  const isNew = docType === 'purchase_order'
+  const isPO = docType === 'purchase_order'
   const [isPending, startTransition] = useTransition()
   const today = new Date().toISOString().slice(0, 10)
   const [form, setForm] = useState({
-    title:       isNew ? '業務委託発注' : '業務委託請求',
+    title:       isPO ? '業務委託発注' : '業務委託請求',
     amount:      String(partner.standard_unit_price || 0),
     description: '',
     issue_date:  today,
-    work_order_id: '',
   })
 
   function set(k: string, v: string) { setForm(p => ({ ...p, [k]: v })) }
 
-  const net = Number(form.amount) || 0
-  const withheld = Math.floor(net * partner.withholding_rate)
-  const total = net - withheld
+  // 税務計算（amountを税抜として入力し、税込で判定）
+  const netExcl   = Number(form.amount) || 0
+  const taxAmt    = Math.floor(netExcl * 0.1)
+  const netIncl   = netExcl + taxAmt
+  const withheld  = Math.floor(netExcl * partner.withholding_rate)
+  const payment   = netExcl - withheld  // 差引支払金額（消費税別）
+
+  const taxCalc = calculateDeductibleTax({
+    amountIncludingTax:  netIncl,
+    isInvoiceRegistered: partner.is_invoice_registered,
+  })
+
+  const invoiceStatus = getInvoiceStatus(partner.is_invoice_registered)
+  const statusColor   = INVOICE_STATUS_COLOR[invoiceStatus]
 
   function handleIssue() {
     startTransition(async () => {
       const res = await createDocument({
-        partner_id:    partner.id,
-        work_order_id: form.work_order_id || null,
-        doc_type:      docType,
-        title:         form.title,
-        amount:        net,
-        description:   form.description || undefined,
-        issue_date:    form.issue_date,
+        partner_id:  partner.id,
+        doc_type:    docType,
+        title:       form.title,
+        amount:      netExcl,
+        description: form.description || undefined,
+        issue_date:  form.issue_date,
       })
       if (res.error) { toast.error(res.error); return }
-      toast.success(`${isNew ? '発注書' : '請求書'} ${res.docNumber} を発行しました`)
+      toast.success(`${isPO ? '発注書' : '請求書'} ${res.docNumber} を発行しました`)
       onIssued()
       setTimeout(() => window.print(), 100)
     })
   }
 
-  const docLabel = isNew ? '発注書' : '請求書'
-  const docPrefix = isNew ? 'PO' : 'INV'
+  const docLabel  = isPO ? '発注書' : '請求書'
+  const docPrefix = isPO ? 'PO'     : 'INV'
 
   return (
     <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
-        {/* Controls (hidden when printing) */}
+        {/* Controls */}
         <div className="print:hidden flex items-center justify-between px-6 py-4 border-b border-[#e2e6ec] sticky top-0 bg-white">
           <div className="text-[15px] font-bold text-[#1a2332]">{docLabel}を発行</div>
           <button onClick={onClose} className="text-[#8f9db0] hover:text-[#1a2332] text-xl leading-none">×</button>
         </div>
 
         <div className="p-6 print:p-0">
-          {/* Form fields (hidden when printing) */}
+          {/* Form fields */}
           <div className="print:hidden space-y-3 mb-6">
+            {/* インボイスステータス表示 */}
+            <div className={cn(
+              'flex items-center gap-3 p-3 rounded-lg border text-[12px]',
+              statusColor,
+            )}>
+              <span className="font-bold">仕入税額控除区分:</span>
+              <span className="font-semibold">{INVOICE_STATUS_LABEL[invoiceStatus]}</span>
+              {taxCalc.isMinorException && (
+                <span className="ml-1 text-[11px] opacity-75">（少額特例 — 税込1万円未満）</span>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-[11px] font-semibold text-[#5a6a7e] mb-1">件名</label>
@@ -120,10 +163,41 @@ function DocumentPreviewModal({
                 className="w-full px-3 py-2 border border-[#e2e6ec] rounded-lg text-[13px] focus:outline-none focus:border-blue-400 resize-none"
               />
             </div>
+
+            {/* 仕入税額控除の計算サマリ */}
+            {netExcl > 0 && (
+              <div className="bg-slate-50 rounded-lg p-4 text-[12px] space-y-1.5">
+                <div className="text-[11px] font-bold text-[#5a6a7e] mb-2 uppercase tracking-wide">
+                  会計処理上の仕入税額控除
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#5a6a7e]">消費税額（10%）</span>
+                  <span className="font-mono">{formatYen(taxCalc.consumptionTax)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#5a6a7e]">
+                    控除可能額
+                    {!taxCalc.isMinorException && taxCalc.deductibleRate < 1 && (
+                      <span className="ml-1 text-amber-600">（{Math.round(taxCalc.deductibleRate * 100)}%控除）</span>
+                    )}
+                    {taxCalc.isMinorException && (
+                      <span className="ml-1 text-green-600">（少額特例 全額）</span>
+                    )}
+                  </span>
+                  <span className="font-mono font-semibold text-green-700">{formatYen(taxCalc.deductibleTax)}</span>
+                </div>
+                {taxCalc.nonDeductibleTax > 0 && (
+                  <div className="flex justify-between border-t border-[#e2e6ec] pt-1.5 mt-1.5">
+                    <span className="text-[#8f9db0]">控除不可（費用計上）</span>
+                    <span className="font-mono text-red-600">{formatYen(taxCalc.nonDeductibleTax)}</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* Print preview */}
-          <div className="border border-[#e2e6ec] rounded-xl p-8 print:border-none print:p-0 text-[#1a2332]" id="doc-preview">
+          {/* 印刷プレビュー */}
+          <div className="border border-[#e2e6ec] rounded-xl p-8 print:border-none print:p-0 text-[#1a2332]">
             <div className="flex items-start justify-between mb-8">
               <div>
                 <div className="text-[28px] font-bold mb-2">{docLabel}</div>
@@ -143,16 +217,23 @@ function DocumentPreviewModal({
               {partner.contact_name && (
                 <div className="text-[12px] text-[#5a6a7e]">{partner.contact_name} 様</div>
               )}
+              {/* インボイス区分 — 印刷時も表示 */}
+              <div className={cn(
+                'inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full border mt-2',
+                INVOICE_STATUS_COLOR[invoiceStatus]
+              )}>
+                {INVOICE_STATUS_LABEL[invoiceStatus]}
+              </div>
             </div>
 
             <div className="mb-6">
-              <div className="text-[13px] font-bold mb-2">{form.title || '—'}</div>
+              <div className="text-[13px] font-bold mb-1">{form.title || '—'}</div>
               {form.description && (
                 <div className="text-[12px] text-[#5a6a7e] whitespace-pre-wrap">{form.description}</div>
               )}
             </div>
 
-            <table className="w-full text-[13px] border border-[#e2e6ec] rounded-lg overflow-hidden">
+            <table className="w-full text-[13px] border border-[#e2e6ec] rounded-lg overflow-hidden mb-6">
               <thead>
                 <tr className="bg-slate-50 border-b border-[#e2e6ec]">
                   <th className="text-left px-4 py-2 font-semibold">項目</th>
@@ -161,8 +242,16 @@ function DocumentPreviewModal({
               </thead>
               <tbody>
                 <tr className="border-b border-[#e2e6ec]">
-                  <td className="px-4 py-3">{form.title || '業務委託費'}</td>
-                  <td className="px-4 py-3 text-right font-mono">{formatYen(net)}</td>
+                  <td className="px-4 py-3">{form.title || '業務委託費'}（税抜）</td>
+                  <td className="px-4 py-3 text-right font-mono">{formatYen(netExcl)}</td>
+                </tr>
+                <tr className="border-b border-[#e2e6ec]">
+                  <td className="px-4 py-3 text-[#5a6a7e]">消費税（10%）</td>
+                  <td className="px-4 py-3 text-right font-mono">{formatYen(taxAmt)}</td>
+                </tr>
+                <tr className="border-b border-[#e2e6ec] font-semibold">
+                  <td className="px-4 py-3">小計（税込）</td>
+                  <td className="px-4 py-3 text-right font-mono">{formatYen(netIncl)}</td>
                 </tr>
                 <tr className="border-b border-[#e2e6ec]">
                   <td className="px-4 py-3 text-[#5a6a7e]">
@@ -174,13 +263,13 @@ function DocumentPreviewModal({
                 </tr>
                 <tr className="bg-slate-50 font-bold">
                   <td className="px-4 py-3">差引支払金額</td>
-                  <td className="px-4 py-3 text-right font-mono text-[18px]">{formatYen(total)}</td>
+                  <td className="px-4 py-3 text-right font-mono text-[18px]">{formatYen(payment)}</td>
                 </tr>
               </tbody>
             </table>
 
             {partner.bank_name && (
-              <div className="mt-6 border border-[#e2e6ec] rounded-lg p-4 text-[12px]">
+              <div className="border border-[#e2e6ec] rounded-lg p-4 text-[12px]">
                 <div className="font-bold mb-1 text-[#5a6a7e]">振込先口座</div>
                 <div>
                   {partner.bank_name}
@@ -188,6 +277,12 @@ function DocumentPreviewModal({
                   {` ${partner.bank_account_type}  ${partner.bank_account_number ?? ''}`}
                   {partner.bank_account_name && ` （${partner.bank_account_name}）`}
                 </div>
+              </div>
+            )}
+
+            {partner.invoice_number && (
+              <div className="mt-3 text-[11px] text-[#8f9db0]">
+                インボイス登録番号: {partner.invoice_number}
               </div>
             )}
           </div>
@@ -297,7 +392,7 @@ function NewWorkOrderModal({
             {field('order_date', '発注日', '', 'date')}
             {field('delivery_date', '納期', '', 'date')}
           </div>
-          {field('amount', '金額（円）*', '0')}
+          {field('amount', '金額（税抜・円）*', '0')}
           {field('notes', 'メモ', '')}
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose}
@@ -327,21 +422,22 @@ function EditPartnerModal({
 }) {
   const [isPending, startTransition] = useTransition()
   const [form, setForm] = useState({
-    company_name:        partner.company_name,
-    contact_name:        partner.contact_name        ?? '',
-    email:               partner.email               ?? '',
-    phone:               partner.phone               ?? '',
-    address:             partner.address             ?? '',
-    bank_name:           partner.bank_name           ?? '',
-    bank_branch:         partner.bank_branch         ?? '',
-    bank_account_type:   partner.bank_account_type,
-    bank_account_number: partner.bank_account_number ?? '',
-    bank_account_name:   partner.bank_account_name   ?? '',
-    standard_unit_price: String(partner.standard_unit_price),
-    invoice_number:      partner.invoice_number      ?? '',
-    withholding_rate:    String((partner.withholding_rate * 100).toFixed(2)),
-    notes:               partner.notes               ?? '',
-    is_active:           partner.is_active,
+    company_name:          partner.company_name,
+    contact_name:          partner.contact_name          ?? '',
+    email:                 partner.email                 ?? '',
+    phone:                 partner.phone                 ?? '',
+    address:               partner.address               ?? '',
+    bank_name:             partner.bank_name             ?? '',
+    bank_branch:           partner.bank_branch           ?? '',
+    bank_account_type:     partner.bank_account_type,
+    bank_account_number:   partner.bank_account_number   ?? '',
+    bank_account_name:     partner.bank_account_name     ?? '',
+    standard_unit_price:   String(partner.standard_unit_price),
+    invoice_number:        partner.invoice_number        ?? '',
+    is_invoice_registered: partner.is_invoice_registered,
+    withholding_rate:      String((partner.withholding_rate * 100).toFixed(2)),
+    notes:                 partner.notes                 ?? '',
+    is_active:             partner.is_active,
   })
   const [errors, setErrors] = useState<Record<string, string>>({})
 
@@ -355,21 +451,22 @@ function EditPartnerModal({
 
     startTransition(async () => {
       const res = await updatePartner(partner.id, {
-        company_name:        form.company_name.trim(),
-        contact_name:        form.contact_name        || null,
-        email:               form.email               || null,
-        phone:               form.phone               || null,
-        address:             form.address             || null,
-        bank_name:           form.bank_name           || null,
-        bank_branch:         form.bank_branch         || null,
-        bank_account_type:   form.bank_account_type,
-        bank_account_number: form.bank_account_number || null,
-        bank_account_name:   form.bank_account_name   || null,
-        standard_unit_price: Number(form.standard_unit_price) || 0,
-        invoice_number:      form.invoice_number      || null,
-        withholding_rate:    Number(form.withholding_rate) / 100 || 0.1021,
-        notes:               form.notes               || null,
-        is_active:           form.is_active,
+        company_name:          form.company_name.trim(),
+        contact_name:          form.contact_name          || null,
+        email:                 form.email                 || null,
+        phone:                 form.phone                 || null,
+        address:               form.address               || null,
+        bank_name:             form.bank_name             || null,
+        bank_branch:           form.bank_branch           || null,
+        bank_account_type:     form.bank_account_type,
+        bank_account_number:   form.bank_account_number   || null,
+        bank_account_name:     form.bank_account_name     || null,
+        standard_unit_price:   Number(form.standard_unit_price) || 0,
+        invoice_number:        form.invoice_number        || null,
+        is_invoice_registered: form.is_invoice_registered,
+        withholding_rate:      Number(form.withholding_rate) / 100 || 0.1021,
+        notes:                 form.notes                 || null,
+        is_active:             form.is_active,
       })
       if (res.error) { toast.error(res.error); return }
       toast.success('パートナー情報を更新しました')
@@ -395,6 +492,8 @@ function EditPartnerModal({
     </div>
   )
 
+  const previewStatus = getInvoiceStatus(form.is_invoice_registered)
+
   return (
     <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -404,7 +503,7 @@ function EditPartnerModal({
         </div>
         <form onSubmit={handleSubmit} noValidate className="p-6 space-y-4">
           <div className="grid grid-cols-2 gap-3">
-            {field('company_name', '会社名 *', '例: 株式会社サンプル')}
+            {field('company_name', '会社名 *')}
             {field('contact_name', '担当者名')}
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -413,8 +512,35 @@ function EditPartnerModal({
           </div>
           {field('address', '住所')}
 
+          {/* インボイス・請求設定 */}
           <div className="border-t border-[#e2e6ec] pt-4">
-            <div className="text-[11px] font-bold text-[#5a6a7e] uppercase tracking-wide mb-3">請求・単価設定</div>
+            <div className="text-[11px] font-bold text-[#5a6a7e] uppercase tracking-wide mb-3">インボイス・請求設定</div>
+
+            <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg mb-3">
+              <div>
+                <div className="text-[13px] font-semibold text-[#1a2332]">適格請求書発行事業者</div>
+                <div className={cn(
+                  'text-[11px] mt-0.5 font-semibold',
+                  form.is_invoice_registered ? 'text-green-600' : 'text-amber-600'
+                )}>
+                  {INVOICE_STATUS_LABEL[previewStatus]}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => set('is_invoice_registered', !form.is_invoice_registered)}
+                className={cn(
+                  'relative inline-flex h-5 w-9 rounded-full border-2 border-transparent transition-colors flex-shrink-0',
+                  form.is_invoice_registered ? 'bg-green-500' : 'bg-slate-300'
+                )}
+              >
+                <span className={cn(
+                  'inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform',
+                  form.is_invoice_registered ? 'translate-x-4' : 'translate-x-0'
+                )} />
+              </button>
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               {field('standard_unit_price', '標準単価（円）')}
               {field('invoice_number', 'インボイス登録番号')}
@@ -430,6 +556,7 @@ function EditPartnerModal({
             </div>
           </div>
 
+          {/* 銀行口座 */}
           <div className="border-t border-[#e2e6ec] pt-4">
             <div className="text-[11px] font-bold text-[#5a6a7e] uppercase tracking-wide mb-3">銀行口座</div>
             <div className="grid grid-cols-2 gap-3">
@@ -505,11 +632,11 @@ export default function PartnerDetailPage() {
   const router = useRouter()
   const id = params.id as string
 
-  const [partner, setPartner] = useState<Partner | null>(null)
-  const [tenantName, setTenantName] = useState<string | null>(null)
-  const [workOrders, setWorkOrders] = useState<WorkOrder[]>([])
-  const [documents, setDocuments] = useState<Document[]>([])
-  const [loading, setLoading] = useState(true)
+  const [partner, setPartner]         = useState<Partner | null>(null)
+  const [tenantName, setTenantName]   = useState<string | null>(null)
+  const [workOrders, setWorkOrders]   = useState<WorkOrder[]>([])
+  const [documents, setDocuments]     = useState<Document[]>([])
+  const [loading, setLoading]         = useState(true)
 
   const [showEdit, setShowEdit]         = useState(false)
   const [showNewOrder, setShowNewOrder] = useState(false)
@@ -579,6 +706,8 @@ export default function PartnerDetailPage() {
       </div>
     )
   }
+
+  const invoiceStatus = getInvoiceStatus(partner.is_invoice_registered)
 
   const thisMonthOrders = workOrders.filter(o => {
     const now = new Date()
@@ -654,14 +783,17 @@ export default function PartnerDetailPage() {
               {partner.company_name.slice(0, 1)}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-[18px] font-bold text-[#1a2332] mb-1">{partner.company_name}</div>
+              <div className="flex items-center gap-3 mb-2 flex-wrap">
+                <div className="text-[18px] font-bold text-[#1a2332]">{partner.company_name}</div>
+                <InvoiceBadge isRegistered={partner.is_invoice_registered} size="lg" />
+              </div>
               {partner.contact_name && (
                 <div className="text-[13px] text-[#5a6a7e] mb-2">担当: {partner.contact_name}</div>
               )}
               <div className="flex flex-wrap gap-x-5 gap-y-1 text-[12px] text-[#5a6a7e]">
-                {partner.email    && <span>✉ {partner.email}</span>}
-                {partner.phone    && <span>☎ {partner.phone}</span>}
-                {partner.address  && <span>📍 {partner.address}</span>}
+                {partner.email   && <span>✉ {partner.email}</span>}
+                {partner.phone   && <span>☎ {partner.phone}</span>}
+                {partner.address && <span>📍 {partner.address}</span>}
               </div>
             </div>
             <div className="text-right flex-shrink-0">
@@ -674,6 +806,25 @@ export default function PartnerDetailPage() {
               </div>
             </div>
           </div>
+
+          {/* 税務情報サマリ */}
+          {!partner.is_invoice_registered && (
+            <div className={cn(
+              'mt-4 rounded-lg border px-4 py-3 text-[12px]',
+              INVOICE_STATUS_COLOR[invoiceStatus]
+            )}>
+              <div className="font-bold mb-0.5">{INVOICE_STATUS_LABEL[invoiceStatus]}</div>
+              <div className="opacity-80">
+                {invoiceStatus === 'transitional_80' &&
+                  '税込1万円以上の支払いは仕入税額の80%のみ控除可能です（〜2026/9/30）。'}
+                {invoiceStatus === 'transitional_50' &&
+                  '税込1万円以上の支払いは仕入税額の50%のみ控除可能です（〜2029/9/30）。'}
+                {invoiceStatus === 'exempt' &&
+                  '仕入税額控除は適用されません。'}
+                {' '}税込1万円未満の取引は少額特例により全額控除されます。
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-3 gap-4 mt-5 pt-5 border-t border-[#e2e6ec] text-[12px]">
             <div>
@@ -790,7 +941,7 @@ export default function PartnerDetailPage() {
                     <th className="text-left px-5 py-3 text-[11px] font-semibold text-[#5a6a7e]">種別</th>
                     <th className="text-left px-5 py-3 text-[11px] font-semibold text-[#5a6a7e]">件名</th>
                     <th className="text-left px-5 py-3 text-[11px] font-semibold text-[#5a6a7e]">発行日</th>
-                    <th className="text-right px-5 py-3 text-[11px] font-semibold text-[#5a6a7e]">金額</th>
+                    <th className="text-right px-5 py-3 text-[11px] font-semibold text-[#5a6a7e]">金額（税抜）</th>
                     <th className="px-5 py-3" />
                   </tr>
                 </thead>

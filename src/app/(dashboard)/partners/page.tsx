@@ -9,6 +9,7 @@ import {
   createPartner,
   type PartnerWithTotal,
 } from '@/app/actions/partners'
+import { getInvoiceStatus, INVOICE_STATUS_LABEL, INVOICE_STATUS_COLOR } from '@/lib/tax'
 
 function formatYen(n: number) { return `¥${n.toLocaleString('ja-JP')}` }
 
@@ -30,24 +31,25 @@ function NewPartnerModal({
 }) {
   const [isPending, startTransition] = useTransition()
   const [form, setForm] = useState({
-    company_name:        '',
-    contact_name:        '',
-    email:               '',
-    phone:               '',
-    address:             '',
-    bank_name:           '',
-    bank_branch:         '',
-    bank_account_type:   '普通',
-    bank_account_number: '',
-    bank_account_name:   '',
-    standard_unit_price: '',
-    invoice_number:      '',
-    withholding_rate:    '10.21',
-    notes:               '',
+    company_name:          '',
+    contact_name:          '',
+    email:                 '',
+    phone:                 '',
+    address:               '',
+    bank_name:             '',
+    bank_branch:           '',
+    bank_account_type:     '普通',
+    bank_account_number:   '',
+    bank_account_name:     '',
+    standard_unit_price:   '',
+    invoice_number:        '',
+    is_invoice_registered: false,
+    withholding_rate:      '10.21',
+    notes:                 '',
   })
   const [errors, setErrors] = useState<Record<string, string>>({})
 
-  function set(k: string, v: string) { setForm(p => ({ ...p, [k]: v })) }
+  function set(k: string, v: string | boolean) { setForm(p => ({ ...p, [k]: v })) }
 
   function validate() {
     const errs: Record<string, string> = {}
@@ -63,20 +65,21 @@ function NewPartnerModal({
 
     startTransition(async () => {
       const res = await createPartner({
-        company_name:        form.company_name.trim(),
-        contact_name:        form.contact_name        || undefined,
-        email:               form.email               || undefined,
-        phone:               form.phone               || undefined,
-        address:             form.address             || undefined,
-        bank_name:           form.bank_name           || undefined,
-        bank_branch:         form.bank_branch         || undefined,
-        bank_account_type:   form.bank_account_type   || undefined,
-        bank_account_number: form.bank_account_number || undefined,
-        bank_account_name:   form.bank_account_name   || undefined,
-        standard_unit_price: Number(form.standard_unit_price) || 0,
-        invoice_number:      form.invoice_number      || undefined,
-        withholding_rate:    Number(form.withholding_rate) / 100 || 0.1021,
-        notes:               form.notes               || undefined,
+        company_name:          form.company_name.trim(),
+        contact_name:          form.contact_name          || undefined,
+        email:                 form.email                 || undefined,
+        phone:                 form.phone                 || undefined,
+        address:               form.address               || undefined,
+        bank_name:             form.bank_name             || undefined,
+        bank_branch:           form.bank_branch           || undefined,
+        bank_account_type:     form.bank_account_type     || undefined,
+        bank_account_number:   form.bank_account_number   || undefined,
+        bank_account_name:     form.bank_account_name     || undefined,
+        standard_unit_price:   Number(form.standard_unit_price) || 0,
+        invoice_number:        form.invoice_number        || undefined,
+        is_invoice_registered: form.is_invoice_registered,
+        withholding_rate:      Number(form.withholding_rate) / 100 || 0.1021,
+        notes:                 form.notes                 || undefined,
       })
       if (res.error) { toast.error(res.error); return }
       toast.success('パートナーを追加しました')
@@ -90,7 +93,7 @@ function NewPartnerModal({
       <label className="block text-[11px] font-semibold text-[#5a6a7e] mb-1">{label}</label>
       <input
         type={type}
-        value={form[key as keyof typeof form]}
+        value={form[key as keyof typeof form] as string}
         onChange={e => set(key, e.target.value)}
         placeholder={placeholder}
         className={cn(
@@ -122,9 +125,35 @@ function NewPartnerModal({
           </div>
           {field('address', '住所', '例: 東京都渋谷区...')}
 
-          {/* 請求・単価 */}
+          {/* インボイス・請求設定 */}
           <div className="border-t border-[#e2e6ec] pt-4">
-            <div className="text-[11px] font-bold text-[#5a6a7e] uppercase tracking-wide mb-3">請求・単価設定</div>
+            <div className="text-[11px] font-bold text-[#5a6a7e] uppercase tracking-wide mb-3">インボイス・請求設定</div>
+
+            {/* インボイス登録トグル */}
+            <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg mb-3">
+              <div>
+                <div className="text-[13px] font-semibold text-[#1a2332]">適格請求書発行事業者</div>
+                <div className="text-[11px] text-[#8f9db0] mt-0.5">
+                  {form.is_invoice_registered
+                    ? '登録済み — 仕入税額の全額控除が適用されます'
+                    : `未登録 — 経過措置あり（${INVOICE_STATUS_LABEL[getInvoiceStatus(false)]}）`}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => set('is_invoice_registered', !form.is_invoice_registered)}
+                className={cn(
+                  'relative inline-flex h-5 w-9 rounded-full border-2 border-transparent transition-colors flex-shrink-0',
+                  form.is_invoice_registered ? 'bg-green-500' : 'bg-slate-300'
+                )}
+              >
+                <span className={cn(
+                  'inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform',
+                  form.is_invoice_registered ? 'translate-x-4' : 'translate-x-0'
+                )} />
+              </button>
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               {field('standard_unit_price', '標準単価（円）', '0')}
               {field('invoice_number', 'インボイス登録番号', 'T1234567890123')}
@@ -253,44 +282,53 @@ export default function PartnersPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {partners.map(p => (
-              <Link
-                key={p.id}
-                href={`/partners/${p.id}`}
-                className="bg-white border border-[#e2e6ec] rounded-xl px-5 py-4 shadow-sm hover:shadow-md hover:border-blue-200 transition-all flex items-start gap-4 group"
-              >
-                <Avatar name={p.company_name} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[14px] font-bold text-[#1a2332] group-hover:text-blue-700 transition-colors truncate">
-                      {p.company_name}
-                    </span>
+            {partners.map(p => {
+              const status = getInvoiceStatus(p.is_invoice_registered)
+              const statusColor = INVOICE_STATUS_COLOR[status]
+              return (
+                <Link
+                  key={p.id}
+                  href={`/partners/${p.id}`}
+                  className="bg-white border border-[#e2e6ec] rounded-xl px-5 py-4 shadow-sm hover:shadow-md hover:border-blue-200 transition-all flex items-start gap-4 group"
+                >
+                  <Avatar name={p.company_name} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className="text-[14px] font-bold text-[#1a2332] group-hover:text-blue-700 transition-colors truncate">
+                        {p.company_name}
+                      </span>
+                      <span className={cn(
+                        'text-[10px] font-semibold px-1.5 py-0.5 rounded-full border flex-shrink-0',
+                        statusColor
+                      )}>
+                        {p.is_invoice_registered ? '適格' : 'インボイス未登録'}
+                      </span>
+                    </div>
+                    {p.contact_name && (
+                      <div className="text-[12px] text-[#5a6a7e] mb-1">{p.contact_name}</div>
+                    )}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[#8f9db0]">
+                      {p.email && <span>{p.email}</span>}
+                      {p.standard_unit_price > 0 && (
+                        <span>単価 {formatYen(p.standard_unit_price)}</span>
+                      )}
+                    </div>
                   </div>
-                  {p.contact_name && (
-                    <div className="text-[12px] text-[#5a6a7e] mb-1">{p.contact_name}</div>
-                  )}
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[#8f9db0]">
-                    {p.email && <span>{p.email}</span>}
-                    {p.phone && <span>{p.phone}</span>}
-                    {p.standard_unit_price > 0 && (
-                      <span>単価 {formatYen(p.standard_unit_price)}</span>
+                  <div className="flex-shrink-0 text-right">
+                    {p.monthlyTotal > 0 ? (
+                      <div>
+                        <div className="text-[11px] text-[#8f9db0] mb-0.5">今月発注</div>
+                        <div className="text-[13px] font-bold text-[#1a2332] font-mono">
+                          {formatYen(p.monthlyTotal)}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-[#8f9db0]">今月発注なし</div>
                     )}
                   </div>
-                </div>
-                <div className="flex-shrink-0 text-right">
-                  {p.monthlyTotal > 0 ? (
-                    <div>
-                      <div className="text-[11px] text-[#8f9db0] mb-0.5">今月発注</div>
-                      <div className="text-[13px] font-bold text-[#1a2332] font-mono">
-                        {formatYen(p.monthlyTotal)}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-[11px] text-[#8f9db0]">今月発注なし</div>
-                  )}
-                </div>
-              </Link>
-            ))}
+                </Link>
+              )
+            })}
           </div>
         )}
       </div>
