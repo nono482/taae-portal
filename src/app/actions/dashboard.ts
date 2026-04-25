@@ -2,6 +2,39 @@
 
 import { createClient } from '@/lib/supabase/server'
 
+export type DashboardExpense = {
+  id: string
+  amount: number
+  status: string
+  expense_date: string
+  vendor_name: string
+  source: string
+  memo: string | null
+  category: { name: string } | null
+  submitter: { display_name: string } | null
+}
+
+export type DashboardNotification = {
+  id: string
+  category: string
+  priority: string
+  title: string
+  body: string
+  is_read: boolean
+  action_href: string | null
+  action_label: string | null
+  created_at: string
+}
+
+export type DashboardSchedule = {
+  id: string
+  title: string
+  due_date: string
+  amount: number | null
+  status: string
+  schedule_type: string
+}
+
 export async function getDashboardData() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -26,7 +59,7 @@ export async function getDashboardData() {
   const monthStart = `${yearMonth}-01`
   const monthEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10)
 
-  // 経費クエリ（ロールによって絞り込み変わる）
+  // ロール別経費クエリ
   let expQuery = (supabase as any)
     .from('expenses')
     .select('id, amount, status, expense_date, vendor_name, source, memo, category:expense_categories(name), submitter:users!submitted_by(display_name)')
@@ -39,54 +72,82 @@ export async function getDashboardData() {
     expQuery = expQuery.eq('submitted_by', user.id)
   }
 
-  const [expensesRes, employeesRes, payrollRes, bankTxRes] = await Promise.all([
+  const [expensesRes, employeesRes, payrollRes, bankTxRes, notifsRes, schedulesRes] = await Promise.all([
     expQuery,
-    (supabase as any).from('employees').select('id, name', { count: 'exact' }).eq('is_active', true),
-    (supabase as any).from('payroll_records').select('id, employee_id, net_pay, sent_at').eq('pay_year_month', yearMonth),
+
+    (supabase as any)
+      .from('employees')
+      .select('id', { count: 'exact' })
+      .eq('tenant_id', tenantId)
+      .eq('is_active', true),
+
+    (supabase as any)
+      .from('payroll_records')
+      .select('id, sent_at')
+      .eq('pay_year_month', yearMonth),
+
     (supabase as any)
       .from('bank_transactions')
-      .select('id, amount, direction, transaction_date, description')
+      .select('id, amount, direction')
       .eq('tenant_id', tenantId)
       .gte('transaction_date', monthStart)
-      .lte('transaction_date', monthEnd)
-      .order('transaction_date', { ascending: false }),
+      .lte('transaction_date', monthEnd),
+
+    // 自分宛の最新通知 8 件（テーブル未作成時は空配列に fallback）
+    (supabase as any)
+      .from('notifications')
+      .select('id, category, priority, title, body, is_read, action_href, action_label, created_at')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(8),
+
+    // 未完了の税務・支払スケジュール（過去分も含め期日順）
+    (supabase as any)
+      .from('financial_schedules')
+      .select('id, title, due_date, amount, status, schedule_type')
+      .eq('tenant_id', tenantId)
+      .neq('status', 'completed')
+      .order('due_date', { ascending: true })
+      .limit(8),
   ])
 
-  const expenses  = (expensesRes.data  ?? []) as Array<{ id: string; amount: number; status: string; expense_date: string; vendor_name: string; source: string; memo: string | null; category: { name: string } | null; submitter: { display_name: string } | null }>
-  const employees = (employeesRes.data ?? []) as Array<{ id: string; name: string }>
-  const payrolls  = (payrollRes.data   ?? []) as Array<{ id: string; employee_id: string; net_pay: number; sent_at: string | null }>
-  const bankTx    = (bankTxRes.data    ?? []) as Array<{ id: string; amount: number; direction: string; transaction_date: string; description: string }>
+  const expenses   = (expensesRes.data  ?? []) as DashboardExpense[]
+  const employees  = (employeesRes.data ?? []) as Array<{ id: string }>
+  const payrolls   = (payrollRes.data   ?? []) as Array<{ id: string; sent_at: string | null }>
+  const bankTx     = (bankTxRes.data    ?? []) as Array<{ id: string; amount: number; direction: string }>
+  const notifications      = (notifsRes.data    ?? []) as DashboardNotification[]
+  const financialSchedules = (schedulesRes.data ?? []) as DashboardSchedule[]
 
+  // KPI 計算
   const pendingExpenses = expenses.filter(e => e.status === 'pending')
   const pendingCount    = pendingExpenses.length
   const pendingAmount   = pendingExpenses.reduce((s, e) => s + Number(e.amount), 0)
+  const monthlyTotal    = expenses.reduce((s, e) => s + Number(e.amount), 0)
+  const approvedCount   = expenses.filter(e => e.status === 'approved').length
+  const approvedAmount  = expenses.filter(e => e.status === 'approved').reduce((s, e) => s + Number(e.amount), 0)
 
   const totalIncome  = bankTx.filter(t => t.direction === 'in').reduce((s, t) => s + Number(t.amount), 0)
   const totalExpense = bankTx.filter(t => t.direction === 'out').reduce((s, t) => s + Number(t.amount), 0)
   const netProfit    = totalIncome - totalExpense
 
+  // 銀行残高（行なしの場合は 0）
   const bankAccountRes = await (supabase as any)
     .from('bank_accounts')
-    .select('balance, bank_name, last_synced_at')
+    .select('balance')
     .eq('tenant_id', tenantId)
     .order('balance', { ascending: false })
     .limit(1)
-    .single()
+    .maybeSingle()
 
   const cashBalance = (bankAccountRes.data?.balance ?? 0) as number
 
   const sentCount  = payrolls.filter(p => p.sent_at).length
   const pendingPay = payrolls.length - sentCount
 
-  // ダッシュボードテーブル用: admin→未承認のみ5件, member→自分の直近5件
+  // ダッシュボードテーブル: admin→未承認5件 / member→自分の直近5件
   const tableExpenses = isPrivileged
     ? pendingExpenses.slice(0, 5)
     : expenses.slice(0, 5)
-
-  // 月間合計（自分の申請 or テナント全体）
-  const monthlyTotal    = expenses.reduce((s, e) => s + Number(e.amount), 0)
-  const approvedCount   = expenses.filter(e => e.status === 'approved').length
-  const approvedAmount  = expenses.filter(e => e.status === 'approved').reduce((s, e) => s + Number(e.amount), 0)
 
   return {
     role,
@@ -104,9 +165,9 @@ export async function getDashboardData() {
       approvedCount,
       approvedAmount,
     },
-    recentExpenses:  tableExpenses,
-    payrollStatus:   { total: employees.length, sent: sentCount, pending: pendingPay },
-    recentBankTx:    bankTx.slice(0, 6),
-    hasRealData:     expenses.length > 0 || bankTx.length > 0,
+    recentExpenses:    tableExpenses,
+    payrollStatus:     { total: employees.length, sent: sentCount, pending: pendingPay },
+    notifications,
+    financialSchedules,
   }
 }
