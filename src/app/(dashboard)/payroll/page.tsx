@@ -100,7 +100,7 @@ function PayrollModal({ emp, rec, onClose }: {
 // ─── 従業員追加モーダル ────────────────────────────────────
 function NewEmployeeModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [isPending, startTransition] = useTransition()
-  const [form, setForm] = useState({ name: '', name_kana: '', email: '', base_salary: '', dependents: '0', joined_at: new Date().toISOString().slice(0, 10) })
+  const [form, setForm] = useState({ name: '', name_kana: '', email: '', base_salary: '', dependents: '0', hire_date: new Date().toISOString().slice(0, 10) })
   const [error, setError] = useState('')
   function set(k: string, v: string) { setForm(p => ({ ...p, [k]: v })) }
   function handleSubmit(e: React.FormEvent) {
@@ -111,7 +111,7 @@ function NewEmployeeModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
       const res = await createEmployee({
         name: form.name, name_kana: form.name_kana, email: form.email,
         base_salary: parseInt(form.base_salary), dependents: parseInt(form.dependents),
-        joined_at: form.joined_at,
+        hire_date: form.hire_date,
       })
       if (res.error) { setError(res.error); return }
       onSaved(); onClose()
@@ -147,7 +147,7 @@ function NewEmployeeModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
           </div>
           <div>
             <label className="block text-[11px] font-semibold text-[#5a6a7e] mb-1">入社日</label>
-            <input type="date" value={form.joined_at} onChange={e => set('joined_at', e.target.value)}
+            <input type="date" value={form.hire_date} onChange={e => set('hire_date', e.target.value)}
               className="w-full px-3 py-2 border border-[#e2e6ec] rounded-lg text-[13px] focus:outline-none focus:border-blue-400" />
           </div>
           <div className="flex gap-3 pt-2">

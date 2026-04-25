@@ -87,12 +87,15 @@ export interface Database {
           id: string
           tenant_id: string
           name: string
-          name_kana: string
-          email: string
+          name_kana: string | null
+          email: string | null
+          phone: string | null
+          department: string | null
+          position_title: string | null
+          hire_date: string | null
           base_salary: number
           dependents: number
           tax_table: TaxTableType
-          joined_at: string
           is_active: boolean
           created_at: string
         }

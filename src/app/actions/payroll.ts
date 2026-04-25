@@ -131,7 +131,7 @@ export async function createEmployee(input: {
   email: string
   base_salary: number
   dependents: number
-  joined_at: string
+  hire_date: string
 }) {
   const { db, tenantId } = await getCtx()
   if (!tenantId) return { error: '未認証' }
@@ -144,7 +144,7 @@ export async function createEmployee(input: {
     base_salary: input.base_salary,
     dependents:  input.dependents,
     tax_table:   'A',
-    joined_at:   input.joined_at,
+    hire_date:   input.hire_date,
     is_active:   true,
   })
 
