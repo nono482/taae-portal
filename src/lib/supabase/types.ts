@@ -216,6 +216,23 @@ export interface Database {
         Insert: Omit<Database['public']['Tables']['audit_logs']['Row'], 'id' | 'created_at'>
         Update: never
       }
+      notifications: {
+        Row: {
+          id: string
+          tenant_id: string
+          user_id: string
+          category: string
+          priority: string
+          title: string
+          body: string
+          is_read: boolean
+          action_label: string | null
+          action_href: string | null
+          created_at: string
+        }
+        Insert: Omit<Database['public']['Tables']['notifications']['Row'], 'id' | 'created_at'>
+        Update: Partial<Database['public']['Tables']['notifications']['Insert']>
+      }
     }
   }
 }
@@ -233,3 +250,4 @@ export type BankAccount        = Database['public']['Tables']['bank_accounts']['
 export type BankTransaction    = Database['public']['Tables']['bank_transactions']['Row']
 export type AuditLog           = Database['public']['Tables']['audit_logs']['Row']
 export type FinancialSchedule  = Database['public']['Tables']['financial_schedules']['Row']
+export type Notification       = Database['public']['Tables']['notifications']['Row']

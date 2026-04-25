@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { revalidatePath } from 'next/cache'
 import { DEFAULT_CATEGORIES } from '@/lib/defaultCategories'
 
@@ -65,6 +66,7 @@ export async function createExpense(input: {
   category_id: string | null
   source: string
   memo?: string
+  receipt_url?: string | null
 }) {
   const { db, user, tenantId } = await getCtx()
   if (!user || !tenantId) return { error: '未認証' }
@@ -108,12 +110,43 @@ export async function createExpense(input: {
     category_id:  resolvedCategoryId,
     source:       input.source || 'web',
     memo:         input.memo || null,
+    receipt_url:  input.receipt_url ?? null,
     status:       'pending',
   })
 
   if (error) return { error: error.message }
+
+  // 管理者へ通知を送信（失敗しても経費登録は成功扱い）
+  try {
+    const adminClient = createAdminClient()
+    const [adminsRes, submitterRes] = await Promise.all([
+      db.from('users').select('id').eq('tenant_id', tenantId).eq('role', 'admin'),
+      db.from('users').select('display_name').eq('id', user.id).single(),
+    ])
+    const admins = (adminsRes.data ?? []) as Array<{ id: string }>
+    const submitterName = (submitterRes.data as any)?.display_name ?? 'メンバー'
+
+    if (admins.length > 0) {
+      await (adminClient as any).from('notifications').insert(
+        admins.map((a) => ({
+          tenant_id:    tenantId,
+          user_id:      a.id,
+          category:     'expense',
+          priority:     'medium',
+          title:        `${submitterName}さんが経費申請しました`,
+          body:         `${input.vendor_name} ¥${Number(input.amount).toLocaleString()}（${input.expense_date}）の申請が届きました。承認をお願いします。`,
+          action_label: '確認する',
+          action_href:  '/expenses',
+        }))
+      )
+    }
+  } catch (e) {
+    console.error('[createExpense] 通知送信失敗:', e)
+  }
+
   revalidatePath('/expenses')
   revalidatePath('/dashboard')
+  revalidatePath('/notifications')
   return { success: true }
 }
 
