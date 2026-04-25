@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-next-app@latest web --typescript --tailwind --eslint --app --src-dir --import-alias \"@/*\" --no-turbopack --yes)",
+      "Bash(npm install:*)",
+      "Bash(npx shadcn@latest init --yes --defaults)",
+      "Bash(npx shadcn@latest add card table badge separator skeleton --yes)",
+      "Bash(npm run:*)",
+      "Bash(mkdir -p \"C:\\\\Users\\\\81805\\\\OneDrive\\\\デスクトップ\\\\smart TAYORU\\\\web\\\\.claude\")",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(npm list:*)"
+    ]
+  }
+}

@@ -1,11 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useTransition } from 'react'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { getTenantSettings, updateTenantSettings } from '@/app/actions/settings'
+import { getTenantSettings, updateTenantSettings, getCurrentUser, updateProfile } from '@/app/actions/settings'
 
-// ─── 型 ──────────────────────────────────────────────────
-type Tab = 'company' | 'notifications' | 'integrations' | 'plan'
+type Tab = 'profile' | 'company' | 'notifications' | 'integrations' | 'plan'
 
 interface CompanySettings {
   name:           string
@@ -27,25 +27,12 @@ interface NotifSettings {
   email_digest:      'none' | 'daily' | 'weekly'
 }
 
-// ─── 初期値 ───────────────────────────────────────────────
 const INIT_COMPANY: CompanySettings = {
-  name:           '',
-  legal_name:     '',
-  tax_id:         '',
-  fiscal_month:   4,
-  address:        '',
-  phone:          '',
-  invoice_prefix: 'INV',
+  name: '', legal_name: '', tax_id: '', fiscal_month: 4, address: '', phone: '', invoice_prefix: 'INV',
 }
-
 const INIT_NOTIF: NotifSettings = {
-  expense_submitted: true,
-  expense_approved:  true,
-  payroll_reminder:  true,
-  tax_due_reminder:  true,
-  bank_sync:         false,
-  weekly_report:     true,
-  email_digest:      'daily',
+  expense_submitted: true, expense_approved: true, payroll_reminder: true,
+  tax_due_reminder: true, bank_sync: false, weekly_report: true, email_digest: 'daily',
 }
 
 const INTEGRATIONS = [
@@ -56,7 +43,6 @@ const INTEGRATIONS = [
   { id: 'mfcloud', name: 'マネーフォワード クラウド', desc: '仕訳・請求書データの自動同期',             status: 'disconnected' as const, detail: '未接続',                        color: 'bg-slate-300'  },
 ]
 
-// ─── トグルスイッチ ───────────────────────────────────────
 function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <button
@@ -84,76 +70,95 @@ function SectionHeader({ title, sub }: { title: string; sub?: string }) {
   )
 }
 
-// ─── PAGE ────────────────────────────────────────────────
 export default function SettingsPage() {
-  const [tab, setTab]                   = useState<Tab>('company')
+  const [tab, setTab]                   = useState<Tab>('profile')
   const [company, setCompany]           = useState<CompanySettings>(INIT_COMPANY)
   const [notif, setNotif]               = useState<NotifSettings>(INIT_NOTIF)
   const [integrations, setIntegrations] = useState(INTEGRATIONS)
   const [loadingInit, setLoadingInit]   = useState(true)
-  const [saving, setSaving]             = useState(false)
-  const [toast, setToast]               = useState<string | null>(null)
 
-  // ── 初期データ読み込み ──────────────────────────────────
+  // プロフィール
+  const [displayName, setDisplayName]   = useState('')
+  const [profileEmail, setProfileEmail] = useState('')
+  const [profileRole, setProfileRole]   = useState('')
+  const [profileError, setProfileError] = useState('')
+  const [profilePending, startProfileTransition] = useTransition()
+
+  // 会社設定
+  const [companySaving, setCompanySaving] = useState(false)
+
   useEffect(() => {
-    getTenantSettings().then(({ data }) => {
-      if (data) {
+    Promise.all([getTenantSettings(), getCurrentUser()]).then(([tenantRes, userRes]) => {
+      if (tenantRes.data) {
         setCompany(prev => ({
           ...prev,
-          name:           data.name          ?? '',
-          invoice_prefix: data.invoice_number ?? 'INV',
-          fiscal_month:   data.fiscal_month  ?? 4,
+          name:           tenantRes.data.name          ?? '',
+          invoice_prefix: tenantRes.data.invoice_number ?? 'INV',
+          fiscal_month:   tenantRes.data.fiscal_month  ?? 4,
         }))
+      }
+      if (userRes.data) {
+        setDisplayName(userRes.data.display_name ?? '')
+        setProfileEmail(userRes.data.email ?? '')
+        setProfileRole(userRes.data.role ?? 'member')
       }
       setLoadingInit(false)
     })
   }, [])
 
-  function showToast(msg: string) {
-    setToast(msg)
-    setTimeout(() => setToast(null), 3000)
+  async function handleSaveProfile(e: React.FormEvent) {
+    e.preventDefault()
+    setProfileError('')
+    if (!displayName.trim()) { setProfileError('表示名を入力してください'); return }
+
+    startProfileTransition(async () => {
+      const res = await updateProfile({ display_name: displayName })
+      if (res.error) { setProfileError(res.error); toast.error(res.error) }
+      else toast.success('プロフィールを更新しました')
+    })
   }
 
-  // ── 会社情報保存 ────────────────────────────────────────
   async function handleSaveCompany(e: React.FormEvent) {
     e.preventDefault()
-    setSaving(true)
+    setCompanySaving(true)
     const result = await updateTenantSettings({
-      name:            company.name,
-      invoice_number:  company.invoice_prefix,
-      fiscal_month:    company.fiscal_month,
+      name:           company.name,
+      invoice_number: company.invoice_prefix,
+      fiscal_month:   company.fiscal_month,
     })
-    setSaving(false)
-    if (result.error) {
-      showToast(`エラー: ${result.error}`)
-    } else {
-      showToast('会社情報を保存しました')
-    }
+    setCompanySaving(false)
+    if (result.error) toast.error(`エラー: ${result.error}`)
+    else toast.success('会社情報を保存しました')
   }
 
   function handleSaveNotif() {
-    showToast('通知設定を保存しました')
+    toast.success('通知設定を保存しました')
   }
 
   function toggleIntegration(id: string) {
     setIntegrations(prev => prev.map(ig => {
       if (ig.id !== id) return ig
       if (ig.status === 'connected') {
-        showToast(`${ig.name} との連携を解除しました`)
+        toast.success(`${ig.name} との連携を解除しました`)
         return { ...ig, status: 'disconnected' as const, detail: '未接続', color: 'bg-slate-300' }
       } else {
-        showToast(`${ig.name} との連携設定を開始します（デモ）`)
+        toast.info(`${ig.name} との連携設定を開始します（デモ）`)
         return ig
       }
     }))
   }
 
   const TABS: { key: Tab; label: string }[] = [
+    { key: 'profile',       label: 'プロフィール' },
     { key: 'company',       label: '会社情報' },
     { key: 'notifications', label: '通知設定' },
     { key: 'integrations',  label: '外部連携' },
     { key: 'plan',          label: 'プラン・請求' },
   ]
+
+  const ROLE_LABEL: Record<string, string> = {
+    admin: '管理者', accountant: '経理担当', member: 'メンバー',
+  }
 
   return (
     <div>
@@ -183,6 +188,83 @@ export default function SettingsPage() {
 
         {/* コンテンツ */}
         <div className="flex-1 p-8 max-w-2xl">
+
+          {/* ── プロフィール ────────────────────────────── */}
+          {tab === 'profile' && (
+            <form onSubmit={handleSaveProfile} noValidate className="space-y-6">
+              <SectionHeader title="プロフィール" sub="あなたの表示名と役割を管理します" />
+
+              {loadingInit ? (
+                <div className="bg-white border border-[#e2e6ec] rounded-lg shadow-sm p-6 space-y-4 animate-pulse">
+                  {[0,1,2].map(i => (
+                    <div key={i}>
+                      <div className="h-3 w-20 bg-slate-100 rounded mb-2" />
+                      <div className="h-9 w-full bg-slate-100 rounded" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="bg-white border border-[#e2e6ec] rounded-lg shadow-sm p-6 space-y-4">
+                  {/* アバター */}
+                  <div className="flex items-center gap-4 pb-4 border-b border-[#e2e6ec]">
+                    <div className="w-14 h-14 rounded-full bg-[#1e3a5f] flex items-center justify-center text-white text-[20px] font-bold">
+                      {displayName.slice(0, 1) || '?'}
+                    </div>
+                    <div>
+                      <div className="text-[14px] font-bold text-[#1a2332]">{displayName || '—'}</div>
+                      <div className="text-[12px] text-[#8f9db0]">{ROLE_LABEL[profileRole] ?? profileRole}</div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[12px] font-semibold text-[#5a6a7e] mb-1.5">
+                      表示名 <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={displayName}
+                      onChange={e => setDisplayName(e.target.value)}
+                      placeholder="例: 上村 Kami"
+                      className={cn(
+                        'w-full border rounded-lg px-3 py-2 text-[13px] text-[#1a2332] focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200',
+                        profileError ? 'border-red-400' : 'border-[#e2e6ec]'
+                      )}
+                    />
+                    {profileError && <p className="text-[11px] text-red-600 mt-1">{profileError}</p>}
+                  </div>
+
+                  <div>
+                    <label className="block text-[12px] font-semibold text-[#5a6a7e] mb-1.5">メールアドレス</label>
+                    <input
+                      type="email"
+                      value={profileEmail}
+                      readOnly
+                      className="w-full border border-[#e2e6ec] rounded-lg px-3 py-2 text-[13px] text-[#8f9db0] bg-slate-50 cursor-not-allowed"
+                    />
+                    <p className="text-[11px] text-[#8f9db0] mt-1">メールアドレスはSupabase Authで管理されています</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[12px] font-semibold text-[#5a6a7e] mb-1.5">ロール</label>
+                    <div className="border border-[#e2e6ec] rounded-lg px-3 py-2 text-[13px] text-[#8f9db0] bg-slate-50">
+                      {ROLE_LABEL[profileRole] ?? profileRole}
+                      <span className="ml-2 text-[10px]">（管理者が変更できます）</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={profilePending || loadingInit}
+                  className="px-5 py-2.5 bg-[#1e3a5f] hover:bg-[#16304f] disabled:opacity-50 text-white text-[13px] font-semibold rounded-lg transition-colors shadow-sm"
+                >
+                  {profilePending ? '保存中…' : '変更を保存'}
+                </button>
+              </div>
+            </form>
+          )}
 
           {/* ── 会社情報 ───────────────────────────────── */}
           {tab === 'company' && (
@@ -221,7 +303,6 @@ export default function SettingsPage() {
                         value={company[f.key] as string}
                         onChange={e => setCompany(prev => ({ ...prev, [f.key]: e.target.value }))}
                         placeholder={f.placeholder}
-                        required={f.required}
                         className="w-full border border-[#e2e6ec] rounded-lg px-3 py-2 text-[13px] text-[#1a2332] placeholder-[#8f9db0] focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-200"
                       />
                     </div>
@@ -249,10 +330,10 @@ export default function SettingsPage() {
               <div className="flex justify-end">
                 <button
                   type="submit"
-                  disabled={saving || loadingInit}
+                  disabled={companySaving || loadingInit}
                   className="px-5 py-2.5 bg-[#1e3a5f] hover:bg-[#16304f] disabled:opacity-50 text-white text-[13px] font-semibold rounded-lg transition-colors shadow-sm"
                 >
-                  {saving ? '保存中…' : '変更を保存'}
+                  {companySaving ? '保存中…' : '変更を保存'}
                 </button>
               </div>
             </form>
@@ -280,10 +361,7 @@ export default function SettingsPage() {
                       <div className="text-[13px] font-semibold text-[#1a2332]">{item.label}</div>
                       <div className="text-[11px] text-[#8f9db0] mt-0.5">{item.sub}</div>
                     </div>
-                    <Toggle
-                      checked={notif[item.key]}
-                      onChange={v => setNotif(prev => ({ ...prev, [item.key]: v }))}
-                    />
+                    <Toggle checked={notif[item.key]} onChange={v => setNotif(prev => ({ ...prev, [item.key]: v }))} />
                   </div>
                 ))}
               </div>
@@ -329,7 +407,6 @@ export default function SettingsPage() {
           {tab === 'integrations' && (
             <div className="space-y-6">
               <SectionHeader title="外部連携" sub="連携サービスを管理します" />
-
               <div className="space-y-3">
                 {integrations.map(ig => (
                   <div key={ig.id} className="bg-white border border-[#e2e6ec] rounded-lg shadow-sm p-5 flex items-center gap-4">
@@ -443,13 +520,6 @@ export default function SettingsPage() {
 
         </div>
       </div>
-
-      {/* Toast */}
-      {toast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-[#1a2332] text-white text-[13px] font-semibold px-5 py-3 rounded-lg shadow-lg z-50">
-          {toast}
-        </div>
-      )}
     </div>
   )
 }

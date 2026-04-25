@@ -1,12 +1,10 @@
 'use client'
 
 import { useState, useTransition } from 'react'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { markNotificationRead, markAllNotificationsRead } from '@/app/actions/notifications'
 import type { NotificationRow } from '@/app/actions/notifications'
-
-type NotifCategory = 'tax' | 'expense' | 'payroll' | 'bank' | 'system'
-type NotifPriority = 'high' | 'medium' | 'low'
 
 const CATEGORY_CFG: Record<string, { label: string; cls: string }> = {
   tax:     { label: '税務',    cls: 'bg-red-50 text-red-700'      },
@@ -24,54 +22,39 @@ const PRIORITY_DOT: Record<string, string> = {
 
 function formatDate(iso: string) {
   const d = new Date(iso)
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  const hh = String(d.getHours()).padStart(2, '0')
+  const mm  = String(d.getMonth() + 1).padStart(2, '0')
+  const dd  = String(d.getDate()).padStart(2, '0')
+  const hh  = String(d.getHours()).padStart(2, '0')
   const min = String(d.getMinutes()).padStart(2, '0')
   return `${d.getFullYear()}/${mm}/${dd} ${hh}:${min}`
 }
-
-// ─── モックフォールバック（DBに通知がない場合） ───────────
-const MOCK_NOTIFS: NotificationRow[] = [
-  { id:'m1', category:'tax',     priority:'high',   title:'源泉所得税の納付期限が過ぎています',        body:'2026年4月分の源泉所得税 ¥48,200 の納付期限（4月10日）が過ぎています。早急に手続きをお願いします。',         is_read:false, action_label:'詳細を確認',      action_href:'/reports',   created_at:'2026-04-13T08:00:00Z' },
-  { id:'m2', category:'expense', priority:'high',   title:'未承認の経費申請が7件あります',             body:'田中 太郎さん他から経費申請が届いています。合計 ¥124,800 の承認処理が必要です。',                          is_read:false, action_label:'一括承認へ',      action_href:'/expenses',  created_at:'2026-04-13T07:30:00Z' },
-  { id:'m3', category:'bank',    priority:'medium', title:'銀行残高が低下しています',                  body:'GMOあおぞら銀行の残高が ¥8,320,000 です。今月の出金予定を考慮すると注意が必要です。',                      is_read:false, action_label:'銀行明細を確認',  action_href:'/banking',   created_at:'2026-04-12T18:00:00Z' },
-  { id:'m4', category:'payroll', priority:'medium', title:'給与明細の送信が2名残っています',           body:'4月分の給与明細について、佐藤 健一さん・高橋 美咲さんへの送信がまだ完了していません。',                    is_read:true,  action_label:'給与管理へ',      action_href:'/payroll',   created_at:'2026-04-12T10:00:00Z' },
-  { id:'m5', category:'tax',     priority:'medium', title:'消費税中間申告の期限（4月30日）が近づいています', body:'消費税の中間申告・納付期限まで残り17日です。納付額 ¥320,000 の準備をお願いします。',               is_read:true,  action_label:'税務スケジュール', action_href:'/reports',   created_at:'2026-04-11T09:00:00Z' },
-  { id:'m6', category:'system',  priority:'low',    title:'Smart TAYORUがアップデートされました',      body:'v1.2.0にアップデートされました。銀行CSV対応が拡充され、PayPay銀行に対応しました。',                       is_read:true,  action_label:null,              action_href:null,         created_at:'2026-04-08T09:00:00Z' },
-]
 
 interface Props {
   initialNotifs: NotificationRow[]
 }
 
 export default function NotificationsClient({ initialNotifs }: Props) {
-  const showMock  = initialNotifs.length === 0
-  const [notifs, setNotifs] = useState<NotificationRow[]>(
-    showMock ? MOCK_NOTIFS : initialNotifs
-  )
-  const [filter, setFilter]   = useState<'all' | 'unread'>('all')
-  const [isPending, startTransition] = useTransition()
+  const [notifs, setNotifs]           = useState<NotificationRow[]>(initialNotifs)
+  const [filter, setFilter]           = useState<'all' | 'unread'>('all')
+  const [isPending, startTransition]  = useTransition()
 
   const unreadCount = notifs.filter(n => !n.is_read).length
   const displayed   = filter === 'unread' ? notifs.filter(n => !n.is_read) : notifs
 
   function markReadLocal(id: string) {
     setNotifs(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n))
-    if (!showMock) {
-      startTransition(() => markNotificationRead(id))
-    }
+    startTransition(() => { markNotificationRead(id) })
   }
 
   function markAllReadLocal() {
     setNotifs(prev => prev.map(n => ({ ...n, is_read: true })))
-    if (!showMock) {
-      startTransition(() => markAllNotificationsRead())
-    }
+    startTransition(() => {
+      markAllNotificationsRead().then(() => toast.success('すべて既読にしました'))
+    })
   }
 
-  const catCfg  = (cat: string)      => CATEGORY_CFG[cat] ?? CATEGORY_CFG['system']
-  const dotCls  = (prio: string)     => PRIORITY_DOT[prio] ?? 'bg-slate-300'
+  const catCfg = (cat: string) => CATEGORY_CFG[cat] ?? CATEGORY_CFG['system']
+  const dotCls = (prio: string) => PRIORITY_DOT[prio] ?? 'bg-slate-300'
 
   return (
     <div>
@@ -82,11 +65,6 @@ export default function NotificationsClient({ initialNotifs }: Props) {
           {unreadCount > 0 && (
             <span className="text-[11px] font-bold bg-red-500 text-white px-2 py-0.5 rounded-full">
               {unreadCount}
-            </span>
-          )}
-          {showMock && (
-            <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
-              デモデータ表示中
             </span>
           )}
         </div>
@@ -132,7 +110,15 @@ export default function NotificationsClient({ initialNotifs }: Props) {
         {/* 通知リスト */}
         <div className="space-y-2">
           {displayed.length === 0 && (
-            <div className="py-16 text-center text-[13px] text-[#8f9db0]">通知はありません</div>
+            <div className="py-16 text-center">
+              <div className="text-[32px] mb-3">🔔</div>
+              <div className="text-[14px] font-semibold text-[#5a6a7e] mb-1">
+                {filter === 'unread' ? '未読の通知はありません' : '通知はありません'}
+              </div>
+              <div className="text-[12px] text-[#8f9db0]">
+                経費申請・承認など操作があると通知が届きます
+              </div>
+            </div>
           )}
           {displayed.map(n => (
             <div

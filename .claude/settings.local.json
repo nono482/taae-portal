@@ -16,7 +16,9 @@
       "Bash(curl -s -o /dev/null -w \"/login -> %{http_code}\\\\n\" http://localhost:3000/login)",
       "Bash(curl *)",
       "Bash(wmic logicaldisk *)",
-      "Bash(wc *)"
+      "Bash(wc *)",
+      "Bash(git add *)",
+      "Bash(git restore *)"
     ]
   }
 }

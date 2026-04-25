@@ -186,13 +186,14 @@ export async function findOrCreateCategory(
 
 // ─── 承認 ────────────────────────────────────────────────
 export async function approveExpense(expenseId: string) {
-  const { db, user } = await getCtx()
-  if (!user) return { error: '未認証' }
+  const { db, user, tenantId } = await getCtx()
+  if (!user || !tenantId) return { error: '未認証' }
 
   const { error } = await db
     .from('expenses')
     .update({ status: 'approved', approved_by: user.id, approved_at: new Date().toISOString() })
     .eq('id', expenseId)
+    .eq('tenant_id', tenantId)
 
   if (error) return { error: error.message }
   revalidatePath('/expenses')
@@ -202,13 +203,14 @@ export async function approveExpense(expenseId: string) {
 
 // ─── 却下 ────────────────────────────────────────────────
 export async function rejectExpense(expenseId: string) {
-  const { db, user } = await getCtx()
-  if (!user) return { error: '未認証' }
+  const { db, user, tenantId } = await getCtx()
+  if (!user || !tenantId) return { error: '未認証' }
 
   const { error } = await db
     .from('expenses')
     .update({ status: 'rejected' })
     .eq('id', expenseId)
+    .eq('tenant_id', tenantId)
 
   if (error) return { error: error.message }
   revalidatePath('/expenses')
@@ -218,13 +220,14 @@ export async function rejectExpense(expenseId: string) {
 
 // ─── 一括承認 ────────────────────────────────────────────
 export async function bulkApproveExpenses(expenseIds: string[]) {
-  const { db, user } = await getCtx()
-  if (!user) return { error: '未認証' }
+  const { db, user, tenantId } = await getCtx()
+  if (!user || !tenantId) return { error: '未認証' }
 
   const { error } = await db
     .from('expenses')
     .update({ status: 'approved', approved_by: user.id, approved_at: new Date().toISOString() })
     .in('id', expenseIds)
+    .eq('tenant_id', tenantId)
 
   if (error) return { error: error.message }
   revalidatePath('/expenses')

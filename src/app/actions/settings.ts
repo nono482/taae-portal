@@ -65,3 +65,22 @@ export async function getCurrentUser() {
 
   return { data }
 }
+
+// ─── プロフィール更新 ─────────────────────────────────────
+export async function updateProfile(input: { display_name: string }) {
+  const { db, user } = await getCtx()
+  if (!user) return { error: '未認証' }
+
+  const trimmed = input.display_name.trim()
+  if (!trimmed) return { error: '表示名を入力してください' }
+
+  const { error } = await db
+    .from('users')
+    .update({ display_name: trimmed })
+    .eq('id', user.id)
+
+  if (error) return { error: error.message }
+  revalidatePath('/settings')
+  revalidatePath('/dashboard')
+  return { success: true }
+}

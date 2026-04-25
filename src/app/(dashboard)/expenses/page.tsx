@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useTransition } from 'react'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import {
   getExpenses, getExpenseCategories,
@@ -23,6 +24,8 @@ interface Expense {
   submitter?: { display_name: string } | null
 }
 interface Category { id: string; name: string; account_code: string }
+
+const PAGE_SIZE = 20
 
 // ─── ステータスチップ ─────────────────────────────────────
 function StatusChip({ status }: { status: Status }) {
@@ -68,7 +71,6 @@ function NewExpenseModal({
   const [error, setError] = useState('')
 
   const taxAmt = form.amount ? Math.round(parseInt(form.amount) * 10 / 110) : 0
-
   function set(k: string, v: string) { setForm(p => ({ ...p, [k]: v })) }
 
   function handleSubmit(e: React.FormEvent) {
@@ -87,6 +89,7 @@ function NewExpenseModal({
         memo:         form.memo || undefined,
       })
       if (res.error) { setError(res.error); return }
+      toast.success('経費を登録しました')
       onSaved()
       onClose()
     })
@@ -99,12 +102,12 @@ function NewExpenseModal({
           <div className="text-[15px] font-bold text-[#1a2332]">経費を新規登録</div>
           <button onClick={onClose} className="text-[#8f9db0] hover:text-[#1a2332] text-xl leading-none">×</button>
         </div>
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <form onSubmit={handleSubmit} noValidate className="p-6 space-y-4">
           {error && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-[13px] text-red-700">{error}</div>}
 
           <div>
             <label className="block text-[11px] font-semibold text-[#5a6a7e] mb-1">支払先 *</label>
-            <input value={form.vendor_name} onChange={e => set('vendor_name', e.target.value)} required
+            <input value={form.vendor_name} onChange={e => set('vendor_name', e.target.value)}
               placeholder="例: セブンイレブン 渋谷店"
               className="w-full px-3 py-2 border border-[#e2e6ec] rounded-lg text-[13px] focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100" />
           </div>
@@ -112,14 +115,16 @@ function NewExpenseModal({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-[11px] font-semibold text-[#5a6a7e] mb-1">金額（税込）*</label>
-              <input value={form.amount} onChange={e => set('amount', e.target.value.replace(/[^\d]/g, ''))}
-                required placeholder="1000"
+              <input
+                type="text" inputMode="numeric"
+                value={form.amount} onChange={e => set('amount', e.target.value.replace(/[^\d]/g, ''))}
+                placeholder="1000"
                 className="w-full px-3 py-2 border border-[#e2e6ec] rounded-lg text-[13px] focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100" />
               {form.amount && <div className="text-[10px] text-[#8f9db0] mt-1">うち消費税 ¥{taxAmt.toLocaleString()}</div>}
             </div>
             <div>
               <label className="block text-[11px] font-semibold text-[#5a6a7e] mb-1">経費日 *</label>
-              <input type="date" value={form.expense_date} onChange={e => set('expense_date', e.target.value)} required
+              <input type="date" value={form.expense_date} onChange={e => set('expense_date', e.target.value)}
                 className="w-full px-3 py-2 border border-[#e2e6ec] rounded-lg text-[13px] focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100" />
             </div>
           </div>
@@ -172,14 +177,16 @@ function NewExpenseModal({
 
 // ─── PAGE ────────────────────────────────────────────────
 export default function ExpensesPage() {
-  const [expenses, setExpenses]           = useState<Expense[]>([])
-  const [categories, setCategories]       = useState<Category[]>([])
-  const [loading, setLoading]             = useState(true)
-  const [selected, setSelected]           = useState<Set<string>>(new Set())
-  const [filterStatus, setFilterStatus]   = useState<'all' | Status>('all')
-  const [bulkMode, setBulkMode]           = useState(false)
-  const [showNewModal, setShowNewModal]   = useState(false)
-  const [isPending, startTransition]      = useTransition()
+  const [expenses, setExpenses]         = useState<Expense[]>([])
+  const [categories, setCategories]     = useState<Category[]>([])
+  const [loading, setLoading]           = useState(true)
+  const [selected, setSelected]         = useState<Set<string>>(new Set())
+  const [filterStatus, setFilterStatus] = useState<'all' | Status>('all')
+  const [searchQuery, setSearchQuery]   = useState('')
+  const [currentPage, setCurrentPage]   = useState(1)
+  const [bulkMode, setBulkMode]         = useState(false)
+  const [showNewModal, setShowNewModal] = useState(false)
+  const [isPending, startTransition]    = useTransition()
 
   async function loadData() {
     setLoading(true)
@@ -191,10 +198,21 @@ export default function ExpensesPage() {
 
   useEffect(() => { loadData() }, [])
 
-  const filtered = expenses.filter(e =>
-    filterStatus === 'all' ? true : e.status === filterStatus
-  )
-  const pendingList = filtered.filter(e => e.status === 'pending')
+  // フィルタ＋検索
+  const filtered = expenses.filter(e => {
+    const statusOk = filterStatus === 'all' || e.status === filterStatus
+    const q = searchQuery.trim().toLowerCase()
+    const searchOk = !q || e.vendor_name.toLowerCase().includes(q) || (e.category?.name ?? '').toLowerCase().includes(q)
+    return statusOk && searchOk
+  })
+
+  const pendingList  = filtered.filter(e => e.status === 'pending')
+  const totalPages   = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const page         = Math.min(currentPage, totalPages)
+  const paginated    = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+
+  function onFilterChange(f: 'all' | Status) { setFilterStatus(f); setCurrentPage(1) }
+  function onSearchChange(q: string)         { setSearchQuery(q);   setCurrentPage(1) }
 
   function toggleSelect(id: string) {
     setSelected(prev => {
@@ -209,19 +227,26 @@ export default function ExpensesPage() {
 
   function handleApprove(id: string) {
     startTransition(async () => {
-      await approveExpense(id)
+      const res = await approveExpense(id)
+      if (res.error) toast.error(`承認エラー: ${res.error}`)
+      else toast.success('承認しました')
       await loadData()
     })
   }
   function handleReject(id: string) {
     startTransition(async () => {
-      await rejectExpense(id)
+      const res = await rejectExpense(id)
+      if (res.error) toast.error(`却下エラー: ${res.error}`)
+      else toast.warning('却下しました')
       await loadData()
     })
   }
   function handleBulkApprove() {
+    const ids = Array.from(selected)
     startTransition(async () => {
-      await bulkApproveExpenses(Array.from(selected))
+      const res = await bulkApproveExpenses(ids)
+      if (res.error) toast.error(`一括承認エラー: ${res.error}`)
+      else toast.success(`${ids.length}件を一括承認しました`)
       setSelected(new Set()); setBulkMode(false)
       await loadData()
     })
@@ -275,10 +300,10 @@ export default function ExpensesPage() {
         {/* サマリーカード */}
         <div className="grid grid-cols-4 gap-4 mb-7">
           {[
-            { label: '未承認',   val: expenses.filter(e=>e.status==='pending').length,   sub: `¥${totalPendingAmt.toLocaleString()}`,                                                                      color: 'text-amber-600', border: 'border-l-amber-400' },
-            { label: '承認済',   val: expenses.filter(e=>e.status==='approved').length,  sub: `¥${expenses.filter(e=>e.status==='approved').reduce((s,e)=>s+e.amount,0).toLocaleString()}`,                color: 'text-green-600',  border: 'border-l-green-500' },
-            { label: '却下',     val: expenses.filter(e=>e.status==='rejected').length,  sub: '要確認',                                                                                                     color: 'text-red-500',   border: 'border-l-red-400'  },
-            { label: '今月合計', val: `¥${expenses.reduce((s,e)=>s+e.amount,0).toLocaleString()}`, sub: `${expenses.length}件`,                                                                            color: 'text-[#1a2332]', border: 'border-l-blue-600' },
+            { label: '未承認',   val: expenses.filter(e=>e.status==='pending').length,   sub: `¥${totalPendingAmt.toLocaleString()}`,  color: 'text-amber-600', border: 'border-l-amber-400' },
+            { label: '承認済',   val: expenses.filter(e=>e.status==='approved').length,  sub: `¥${expenses.filter(e=>e.status==='approved').reduce((s,e)=>s+e.amount,0).toLocaleString()}`, color: 'text-green-600', border: 'border-l-green-500' },
+            { label: '却下',     val: expenses.filter(e=>e.status==='rejected').length,  sub: '要確認', color: 'text-red-500', border: 'border-l-red-400' },
+            { label: '今月合計', val: `¥${expenses.reduce((s,e)=>s+e.amount,0).toLocaleString()}`, sub: `${expenses.length}件`, color: 'text-[#1a2332]', border: 'border-l-blue-600' },
           ].map(c => (
             <div key={c.label} className={cn('bg-white border border-[#e2e6ec] border-l-4 rounded-lg p-4 shadow-sm', c.border)}>
               <div className="text-[11px] font-semibold text-[#8f9db0] uppercase tracking-wide mb-1">{c.label}</div>
@@ -300,23 +325,34 @@ export default function ExpensesPage() {
           </div>
         )}
 
-        {/* フィルタータブ */}
-        <div className="flex items-center gap-1 mb-4 border-b border-[#e2e6ec]">
-          {(['all', 'pending', 'approved', 'rejected'] as const).map(f => {
-            const label = { all: 'すべて', pending: '未承認', approved: '承認済', rejected: '却下' }[f]
-            const count = f === 'all' ? expenses.length : expenses.filter(e => e.status === f).length
-            return (
-              <button key={f} onClick={() => setFilterStatus(f)}
-                className={cn('px-4 py-2.5 text-[13px] font-semibold border-b-2 transition-colors -mb-px',
-                  filterStatus === f ? 'border-blue-600 text-blue-600' : 'border-transparent text-[#5a6a7e] hover:text-[#1a2332]')}>
-                {label}
-                <span className={cn('ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full font-bold',
-                  filterStatus === f ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-[#8f9db0]')}>
-                  {count}
-                </span>
-              </button>
-            )
-          })}
+        {/* 検索バー + フィルタータブ */}
+        <div className="flex items-end gap-4 mb-1">
+          <div className="flex items-center gap-1 border-b border-[#e2e6ec] flex-1">
+            {(['all', 'pending', 'approved', 'rejected'] as const).map(f => {
+              const label = { all: 'すべて', pending: '未承認', approved: '承認済', rejected: '却下' }[f]
+              const count = f === 'all' ? expenses.length : expenses.filter(e => e.status === f).length
+              return (
+                <button key={f} onClick={() => onFilterChange(f)}
+                  className={cn('px-4 py-2.5 text-[13px] font-semibold border-b-2 transition-colors -mb-px',
+                    filterStatus === f ? 'border-blue-600 text-blue-600' : 'border-transparent text-[#5a6a7e] hover:text-[#1a2332]')}>
+                  {label}
+                  <span className={cn('ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full font-bold',
+                    filterStatus === f ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-[#8f9db0]')}>
+                    {count}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+          <div className="mb-1">
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={e => onSearchChange(e.target.value)}
+              placeholder="支払先・科目を検索…"
+              className="w-56 px-3 py-2 border border-[#e2e6ec] rounded-lg text-[13px] focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-100"
+            />
+          </div>
         </div>
 
         {/* テーブル */}
@@ -339,7 +375,7 @@ export default function ExpensesPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map(e => (
+                {paginated.map(e => (
                   <tr key={e.id} className={cn('border-b border-[#e2e6ec] last:border-0 transition-colors',
                     selected.has(e.id) ? 'bg-blue-50' : 'hover:bg-slate-50')}>
                     {bulkMode && (
@@ -355,9 +391,7 @@ export default function ExpensesPage() {
                       {e.memo && <div className="text-[11px] text-[#8f9db0] mt-0.5">{e.memo}</div>}
                     </td>
                     <td className="px-4 py-3 text-[13px] text-[#5a6a7e]">{e.category?.name ?? '—'}</td>
-                    <td className="px-4 py-3 text-[13px] text-[#5a6a7e]">
-                      {e.submitter?.display_name ?? '—'}
-                    </td>
+                    <td className="px-4 py-3 text-[13px] text-[#5a6a7e]">{e.submitter?.display_name ?? '—'}</td>
                     <td className="px-4 py-3 text-[13px] text-[#8f9db0] whitespace-nowrap">
                       {String(e.expense_date).slice(5).replace('-', '/')}
                     </td>
@@ -398,22 +432,59 @@ export default function ExpensesPage() {
             </table>
             {filtered.length === 0 && !loading && (
               <div className="py-16 text-center">
-                <div className="text-[13px] text-[#8f9db0] mb-3">経費データがありません</div>
-                <button onClick={() => setShowNewModal(true)}
-                  className="text-[13px] font-semibold text-blue-600 hover:underline">
-                  ＋ 最初の経費を登録する
-                </button>
+                <div className="text-[13px] text-[#8f9db0] mb-3">
+                  {searchQuery ? `"${searchQuery}" に一致する経費がありません` : '経費データがありません'}
+                </div>
+                {!searchQuery && (
+                  <button onClick={() => setShowNewModal(true)}
+                    className="text-[13px] font-semibold text-blue-600 hover:underline">
+                    ＋ 最初の経費を登録する
+                  </button>
+                )}
               </div>
             )}
           </div>
         )}
 
+        {/* ページネーション + 件数 */}
         {filtered.length > 0 && (
-          <div className="mt-3 flex justify-end">
+          <div className="mt-3 flex items-center justify-between">
             <div className="text-[12px] text-[#5a6a7e]">
-              表示中 {filtered.length} 件　合計
+              {filtered.length}件中 {(page - 1) * PAGE_SIZE + 1}〜{Math.min(page * PAGE_SIZE, filtered.length)}件表示　合計
               <span className="font-bold text-[#1a2332] ml-1">¥{filtered.reduce((s, e) => s + e.amount, 0).toLocaleString()}</span>
             </div>
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <button
+                  disabled={page <= 1}
+                  onClick={() => setCurrentPage(p => p - 1)}
+                  className="px-2.5 py-1 text-[12px] font-semibold border border-[#e2e6ec] rounded hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  ‹ 前へ
+                </button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map(n => (
+                  <button
+                    key={n}
+                    onClick={() => setCurrentPage(n)}
+                    className={cn(
+                      'w-8 h-8 text-[12px] font-semibold border rounded transition-colors',
+                      n === page
+                        ? 'border-blue-600 bg-blue-600 text-white'
+                        : 'border-[#e2e6ec] text-[#5a6a7e] hover:bg-slate-50'
+                    )}
+                  >
+                    {n}
+                  </button>
+                ))}
+                <button
+                  disabled={page >= totalPages}
+                  onClick={() => setCurrentPage(p => p + 1)}
+                  className="px-2.5 py-1 text-[12px] font-semibold border border-[#e2e6ec] rounded hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  次へ ›
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
