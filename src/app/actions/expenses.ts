@@ -150,6 +150,40 @@ export async function createExpense(input: {
   return { success: true }
 }
 
+// ─── カテゴリ 検索 or 新規作成 ───────────────────────────
+export async function findOrCreateCategory(
+  name: string,
+): Promise<{ id: string | null }> {
+  const { db, tenantId } = await getCtx()
+  if (!tenantId) return { id: null }
+
+  const trimmed = name.trim()
+  if (!trimmed) return { id: null }
+
+  const { data: existing } = await db
+    .from('expense_categories')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .ilike('name', trimmed)
+    .maybeSingle()
+
+  if (existing) return { id: existing.id }
+
+  const { data: newCat } = await db
+    .from('expense_categories')
+    .insert({
+      tenant_id:    tenantId,
+      name:         trimmed,
+      account_code: '899',
+      tax_type:     '10%',
+      is_system:    false,
+    })
+    .select('id')
+    .single()
+
+  return { id: newCat?.id ?? null }
+}
+
 // ─── 承認 ────────────────────────────────────────────────
 export async function approveExpense(expenseId: string) {
   const { db, user } = await getCtx()

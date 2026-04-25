@@ -3,17 +3,17 @@
 import { useState, useEffect, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { getExpenseCategories, createExpense } from '@/app/actions/expenses'
+import { getExpenseCategories, createExpense, findOrCreateCategory } from '@/app/actions/expenses'
 import { cn } from '@/lib/utils'
 
 interface Category { id: string; name: string; account_code: string }
 
-// ─── スケルトン ────────────────────────────────────────────
+const CUSTOM_ID = '__custom__'
+
 function FieldSkeleton() {
   return <div className="h-10 bg-slate-100 rounded-lg animate-pulse" />
 }
 
-// ─── 成功画面 ─────────────────────────────────────────────
 function SuccessView() {
   return (
     <div className="min-h-[calc(100vh-54px)] flex items-center justify-center bg-[#f4f6f9]">
@@ -42,18 +42,19 @@ function SuccessView() {
 export default function NewExpensePage() {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
-  const [categories,   setCategories]   = useState<Category[]>([])
-  const [catLoading,   setCatLoading]   = useState(true)
-  const [uploading,    setUploading]    = useState(false)
-  const [success,      setSuccess]      = useState(false)
-  const [error,        setError]        = useState('')
-  const [file,         setFile]         = useState<File | null>(null)
+  const [categories,  setCategories]  = useState<Category[]>([])
+  const [catLoading,  setCatLoading]  = useState(true)
+  const [uploading,   setUploading]   = useState(false)
+  const [success,     setSuccess]     = useState(false)
+  const [error,       setError]       = useState('')
+  const [file,        setFile]        = useState<File | null>(null)
   const [form, setForm] = useState({
-    vendor_name:  '',
-    amount:       '',
-    expense_date: new Date().toISOString().slice(0, 10),
-    category_id:  '',
-    memo:         '',
+    vendor_name:     '',
+    amount:          '',        // 文字列のまま管理（type="text"）
+    expense_date:    new Date().toISOString().slice(0, 10),
+    category_id:     '',        // '' | UUID | '__custom__'
+    custom_category: '',        // category_id === '__custom__' のときの自由入力
+    memo:            '',
   })
 
   useEffect(() => {
@@ -62,43 +63,52 @@ export default function NewExpensePage() {
       .finally(() => setCatLoading(false))
   }, [])
 
-  // 成功後リダイレクト
   useEffect(() => {
     if (!success) return
     const t = setTimeout(() => router.push('/expenses'), 1800)
     return () => clearTimeout(t)
   }, [success, router])
 
-  const taxAmt = form.amount ? Math.round(parseInt(form.amount) * 10 / 110) : 0
+  // 数字のみ受け付け・消費税リアルタイム計算
+  const amtNum = parseInt(form.amount) || 0
+  const taxAmt = amtNum > 0 ? Math.round(amtNum * 10 / 110) : 0
 
   function set(k: string, v: string) {
     setForm(p => ({ ...p, [k]: v }))
+  }
+
+  // 金額フィールド: 数字以外を除去してセット
+  function onAmountChange(raw: string) {
+    set('amount', raw.replace(/[^0-9]/g, ''))
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
 
+    // ── カスタムバリデーション（ブラウザ native required に頼らない）──
     if (!form.vendor_name.trim()) { setError('支払先を入力してください'); return }
-    if (!form.amount || parseInt(form.amount) <= 0) { setError('金額を入力してください'); return }
-    if (!form.expense_date) { setError('日付を入力してください'); return }
+    if (!form.amount || amtNum <= 0) { setError('正しい金額を入力してください'); return }
+    if (!form.expense_date)          { setError('日付を入力してください'); return }
+    if (form.category_id === CUSTOM_ID && !form.custom_category.trim()) {
+      setError('手入力の場合は科目名を入力してください')
+      return
+    }
 
+    // ── 領収書アップロード ──────────────────────────────────
     let receipt_url: string | null = null
-
     if (file) {
       setUploading(true)
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
-      const userId = user?.id ?? 'unknown'
-      const ext = file.name.split('.').pop() ?? 'bin'
-      const path = `${userId}/${Date.now()}.${ext}`
+      const ext  = file.name.split('.').pop() ?? 'bin'
+      const path = `${user?.id ?? 'unknown'}/${Date.now()}.${ext}`
 
       const { error: uploadErr } = await supabase.storage
         .from('receipts')
         .upload(path, file, { upsert: false })
 
       setUploading(false)
-
       if (uploadErr) {
         setError(`領収書のアップロードに失敗しました: ${uploadErr.message}`)
         return
@@ -106,13 +116,24 @@ export default function NewExpensePage() {
       receipt_url = path
     }
 
+    // ── 手入力カテゴリの解決 ────────────────────────────────
+    let resolvedCategoryId: string | null = form.category_id === CUSTOM_ID
+      ? null
+      : (form.category_id || null)
+
+    if (form.category_id === CUSTOM_ID && form.custom_category.trim()) {
+      const { id } = await findOrCreateCategory(form.custom_category.trim())
+      resolvedCategoryId = id
+    }
+
+    // ── 経費登録 ────────────────────────────────────────────
     startTransition(async () => {
       const res = await createExpense({
         vendor_name:  form.vendor_name.trim(),
-        amount:       parseInt(form.amount),
+        amount:       amtNum,
         tax_amount:   taxAmt,
         expense_date: form.expense_date,
-        category_id:  form.category_id || null,
+        category_id:  resolvedCategoryId,
         source:       'web',
         memo:         form.memo.trim() || undefined,
         receipt_url,
@@ -156,7 +177,8 @@ export default function NewExpensePage() {
               <div className="text-[12px] text-[#8f9db0] mt-0.5">申請後、管理者に通知が自動送信されます</div>
             </div>
 
-            <form onSubmit={handleSubmit} className="px-6 py-6 space-y-5">
+            {/* noValidate でブラウザのネイティブバリデーションを無効化 */}
+            <form onSubmit={handleSubmit} noValidate className="px-6 py-6 space-y-5">
               {error && (
                 <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-[13px] text-red-700">
                   {error}
@@ -172,7 +194,6 @@ export default function NewExpensePage() {
                   type="text"
                   value={form.vendor_name}
                   onChange={e => set('vendor_name', e.target.value)}
-                  required
                   autoFocus
                   placeholder="例: セブンイレブン 新宿駅前店"
                   className="w-full px-3 py-2.5 border border-[#e2e6ec] rounded-lg text-[13px] text-[#1a2332] placeholder:text-[#c0c8d8] focus:outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-blue-100 transition-colors"
@@ -186,13 +207,18 @@ export default function NewExpensePage() {
                     金額（税込）<span className="text-red-500">*</span>
                   </label>
                   <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[13px] font-semibold text-[#5a6a7e] pointer-events-none">¥</span>
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[13px] font-semibold text-[#5a6a7e] pointer-events-none select-none">¥</span>
+                    {/*
+                      type="text" + inputMode="numeric" を使用。
+                      type="number" + required はブラウザの native バリデーションが
+                      React の制御より先に発火して送信を阻む問題があるため回避。
+                      バリデーションは handleSubmit 内で行う。
+                    */}
                     <input
-                      type="number"
-                      min="1"
+                      type="text"
+                      inputMode="numeric"
                       value={form.amount}
-                      onChange={e => set('amount', e.target.value)}
-                      required
+                      onChange={e => onAmountChange(e.target.value)}
                       placeholder="0"
                       className="w-full pl-7 pr-3 py-2.5 border border-[#e2e6ec] rounded-lg text-[13px] text-[#1a2332] placeholder:text-[#c0c8d8] focus:outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-blue-100 transition-colors"
                     />
@@ -211,7 +237,6 @@ export default function NewExpensePage() {
                     type="date"
                     value={form.expense_date}
                     onChange={e => set('expense_date', e.target.value)}
-                    required
                     className="w-full px-3 py-2.5 border border-[#e2e6ec] rounded-lg text-[13px] text-[#1a2332] focus:outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-blue-100 transition-colors"
                   />
                 </div>
@@ -225,20 +250,38 @@ export default function NewExpensePage() {
                 {catLoading ? (
                   <FieldSkeleton />
                 ) : (
-                  <div className="relative">
-                    <select
-                      value={form.category_id}
-                      onChange={e => set('category_id', e.target.value)}
-                      className="w-full px-3 py-2.5 border border-[#e2e6ec] rounded-lg text-[13px] text-[#1a2332] focus:outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-blue-100 transition-colors appearance-none bg-white pr-8"
-                    >
-                      <option value="">カテゴリを選択（任意）</option>
-                      {categories.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </select>
-                    <svg className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8f9db0] pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                    </svg>
+                  <div className="space-y-2">
+                    <div className="relative">
+                      <select
+                        value={form.category_id}
+                        onChange={e => set('category_id', e.target.value)}
+                        className="w-full px-3 py-2.5 border border-[#e2e6ec] rounded-lg text-[13px] text-[#1a2332] focus:outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-blue-100 transition-colors appearance-none bg-white pr-8"
+                      >
+                        <option value="">カテゴリを選択（任意）</option>
+                        {categories.map(c => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                        <option value={CUSTOM_ID}>✏️ 手入力（その他）</option>
+                      </select>
+                      <svg className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8f9db0] pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+
+                    {/* 手入力サブフィールド */}
+                    {form.category_id === CUSTOM_ID && (
+                      <div className="flex items-center gap-2 pl-3 border-l-2 border-blue-300">
+                        <input
+                          type="text"
+                          value={form.custom_category}
+                          onChange={e => set('custom_category', e.target.value)}
+                          placeholder="例: 開発費、雑費、研修費…"
+                          autoFocus
+                          className="flex-1 px-3 py-2 border border-[#e2e6ec] rounded-lg text-[13px] text-[#1a2332] placeholder:text-[#c0c8d8] focus:outline-none focus:border-[#2563eb] focus:ring-2 focus:ring-blue-100 transition-colors"
+                        />
+                        <span className="text-[11px] text-[#8f9db0] whitespace-nowrap">として登録</span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
