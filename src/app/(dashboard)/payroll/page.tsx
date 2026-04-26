@@ -4,6 +4,8 @@ import { useState, useEffect, useTransition } from 'react'
 import { calculatePayroll, formatYen } from '@/lib/payrollCalculator'
 import { cn } from '@/lib/utils'
 import { getPayrollData, ensurePayrollRecords, markPayrollSent, markAllPayrollSent, createEmployee } from '@/app/actions/payroll'
+import { getPayrollEntries, createPayrollEntry, deletePayrollEntry, type PayrollEntry, type PaymentType } from '@/app/actions/payrollEntries'
+import { PAYMENT_TYPE_LABEL } from '@/constants/payroll'
 
 const NOW_MONTH = (() => {
   const d = new Date()
@@ -98,6 +100,127 @@ function PayrollModal({ emp, rec, onClose }: {
   )
 }
 
+// ─── 支払い登録モーダル ────────────────────────────────────
+function NewEntryModal({ employees, onClose, onSaved }: {
+  employees: Array<{ id: string; name: string; name_kana: string }>
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [isPending, startTransition] = useTransition()
+  const [form, setForm] = useState({
+    employee_id:  employees[0]?.id ?? '',
+    payment_date: new Date().toISOString().slice(0, 10),
+    payment_type: 'special' as PaymentType,
+    amount:       '',
+    description:  '',
+  })
+  const [err, setErr] = useState('')
+
+  function set(k: string, v: string) { setForm(p => ({ ...p, [k]: v })) }
+
+  const amount    = parseInt(form.amount.replace(/,/g, '')) || 0
+  const taxAmount = Math.floor(amount * 0.1021)
+  const netAmount = amount - taxAmount
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!form.employee_id) { setErr('従業員を選択してください'); return }
+    if (!amount || amount <= 0) { setErr('金額を入力してください'); return }
+    setErr('')
+    startTransition(async () => {
+      const res = await createPayrollEntry({
+        employee_id:  form.employee_id,
+        payment_date: form.payment_date,
+        payment_type: form.payment_type,
+        amount,
+        tax_amount:   taxAmount,
+        description:  form.description || undefined,
+      })
+      if (res.error) { setErr(res.error); return }
+      onSaved(); onClose()
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/30 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#e2e6ec]">
+          <div className="text-[15px] font-bold text-[#1a2332]">支払いを登録</div>
+          <button onClick={onClose} className="text-[#8f9db0] hover:text-[#1a2332] text-xl leading-none">×</button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {err && <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-[13px] text-red-700">{err}</div>}
+
+          <div>
+            <label className="block text-[11px] font-semibold text-[#5a6a7e] mb-1">従業員 *</label>
+            <select value={form.employee_id} onChange={e => set('employee_id', e.target.value)}
+              className="w-full px-3 py-2 border border-[#e2e6ec] rounded-lg text-[13px] bg-white focus:outline-none focus:border-blue-400">
+              {employees.map(emp => (
+                <option key={emp.id} value={emp.id}>{emp.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] font-semibold text-[#5a6a7e] mb-1">支払区分</label>
+              <select value={form.payment_type} onChange={e => set('payment_type', e.target.value)}
+                className="w-full px-3 py-2 border border-[#e2e6ec] rounded-lg text-[13px] bg-white focus:outline-none focus:border-blue-400">
+                {(Object.entries(PAYMENT_TYPE_LABEL) as [PaymentType, string][]).map(([k, v]) => (
+                  <option key={k} value={k}>{v}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-[#5a6a7e] mb-1">支払日</label>
+              <input type="date" value={form.payment_date} onChange={e => set('payment_date', e.target.value)}
+                className="w-full px-3 py-2 border border-[#e2e6ec] rounded-lg text-[13px] focus:outline-none focus:border-blue-400" />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-semibold text-[#5a6a7e] mb-1">支払金額（税込）*</label>
+            <input value={form.amount} onChange={e => set('amount', e.target.value.replace(/[^\d]/g, ''))}
+              placeholder="100000"
+              className="w-full px-3 py-2 border border-[#e2e6ec] rounded-lg text-[13px] focus:outline-none focus:border-blue-400" />
+          </div>
+
+          {amount > 0 && (
+            <div className="bg-slate-50 rounded-lg p-3 text-[12px] space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-[#5a6a7e]">源泉所得税（10.21%）</span>
+                <span className="font-mono text-red-600">−{formatYen(taxAmount)}</span>
+              </div>
+              <div className="flex justify-between border-t border-[#e2e6ec] pt-1.5 font-semibold">
+                <span className="text-[#1a2332]">手取り支給額</span>
+                <span className="font-mono text-green-700">{formatYen(netAmount)}</span>
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-[11px] font-semibold text-[#5a6a7e] mb-1">摘要・備考</label>
+            <input value={form.description} onChange={e => set('description', e.target.value)}
+              placeholder="例: 法人クレカ代立替・3月分"
+              className="w-full px-3 py-2 border border-[#e2e6ec] rounded-lg text-[13px] focus:outline-none focus:border-blue-400" />
+          </div>
+
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose}
+              className="flex-1 py-2.5 text-[13px] font-semibold text-[#5a6a7e] border border-[#e2e6ec] rounded-lg hover:bg-slate-50">
+              キャンセル
+            </button>
+            <button type="submit" disabled={isPending}
+              className="flex-1 py-2.5 text-[13px] font-semibold text-white bg-[#1e3a5f] hover:bg-[#16304f] disabled:opacity-50 rounded-lg">
+              {isPending ? '登録中…' : '登録する'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
 // ─── 従業員追加モーダル ────────────────────────────────────
 function NewEmployeeModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [isPending, startTransition] = useTransition()
@@ -165,22 +288,27 @@ function NewEmployeeModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
 
 // ─── PAGE ─────────────────────────────────────────────────
 export default function PayrollPage() {
-  const [employees, setEmployees]   = useState<Employee[]>([])
-  const [records, setRecords]       = useState<PayrollRecord[]>([])
-  const [loading, setLoading]       = useState(true)
-  const [modalEmp, setModalEmp]     = useState<Employee | null>(null)
-  const [showNew, setShowNew]       = useState(false)
-  const [isPending, startTransition]= useTransition()
-  const [toast, setToast]           = useState('')
+  const [employees, setEmployees]       = useState<Employee[]>([])
+  const [records, setRecords]           = useState<PayrollRecord[]>([])
+  const [entries, setEntries]           = useState<PayrollEntry[]>([])
+  const [tab, setTab]                   = useState<'payroll' | 'entries'>('payroll')
+  const [loading, setLoading]           = useState(true)
+  const [modalEmp, setModalEmp]         = useState<Employee | null>(null)
+  const [showNew, setShowNew]           = useState(false)
+  const [showNewEntry, setShowNewEntry] = useState(false)
+  const [isPending, startTransition]    = useTransition()
+  const [toast, setToast]               = useState('')
 
   async function loadData() {
     setLoading(true)
-    const { employees: emps, records: recs } = await getPayrollData(NOW_MONTH)
-    setEmployees(emps as Employee[])
-    setRecords(recs as PayrollRecord[])
-    // 従業員がいれば常に ensurePayrollRecords を呼ぶ
-    // （新規作成 + 基本給が変わったレコードの更新を行う）
-    if (emps.length > 0) {
+    const [payrollRes, entriesRes] = await Promise.all([
+      getPayrollData(NOW_MONTH),
+      getPayrollEntries(NOW_MONTH),
+    ])
+    setEmployees(payrollRes.employees as Employee[])
+    setRecords(payrollRes.records as PayrollRecord[])
+    setEntries(entriesRes.data)
+    if (payrollRes.employees.length > 0) {
       await ensurePayrollRecords(NOW_MONTH)
       const updated = await getPayrollData(NOW_MONTH)
       setEmployees(updated.employees as Employee[])
@@ -247,6 +375,21 @@ export default function PayrollPage() {
   const totalNet       = summaries.reduce((s, r) => s + r.netPay, 0)
   const totalIncomeTax = summaries.reduce((s, r) => s + r.incomeTax, 0)
 
+  const entryTotalAmount = entries.reduce((s, e) => s + e.amount, 0)
+  const entryTotalTax    = entries.reduce((s, e) => s + e.tax_amount, 0)
+  const entryTotalNet    = entryTotalAmount - entryTotalTax
+
+  function empName(id: string) {
+    return employees.find(e => e.id === id)?.name ?? '—'
+  }
+  function handleDeleteEntry(id: string) {
+    startTransition(async () => {
+      await deletePayrollEntry(id)
+      await loadData()
+      showToast('削除しました')
+    })
+  }
+
   return (
     <div>
       {toast && (
@@ -256,24 +399,124 @@ export default function PayrollPage() {
       )}
       {modalEmp && <PayrollModal emp={modalEmp} rec={getRecord(modalEmp.id)} onClose={() => setModalEmp(null)} />}
       {showNew && <NewEmployeeModal onClose={() => setShowNew(false)} onSaved={loadData} />}
+      {showNewEntry && <NewEntryModal employees={employees} onClose={() => setShowNewEntry(false)} onSaved={loadData} />}
 
       {/* Topbar */}
       <div className="bg-white border-b border-[#e2e6ec] px-8 h-[54px] flex items-center justify-between sticky top-0 z-40">
-        <h1 className="text-[16px] font-bold text-[#1a2332]">給与管理</h1>
+        <div className="flex items-center gap-4">
+          <h1 className="text-[16px] font-bold text-[#1a2332]">給与管理</h1>
+          <div className="flex gap-1 bg-slate-100 rounded-lg p-0.5">
+            <button onClick={() => setTab('payroll')}
+              className={cn('px-3 py-1 text-[12px] font-semibold rounded-md transition-colors', tab === 'payroll' ? 'bg-white text-[#1a2332] shadow-sm' : 'text-[#8f9db0] hover:text-[#1a2332]')}>
+              月次給与
+            </button>
+            <button onClick={() => setTab('entries')}
+              className={cn('px-3 py-1 text-[12px] font-semibold rounded-md transition-colors', tab === 'entries' ? 'bg-white text-[#1a2332] shadow-sm' : 'text-[#8f9db0] hover:text-[#1a2332]')}>
+              支払い記録
+            </button>
+          </div>
+        </div>
         <div className="flex items-center gap-3">
           <span className="text-[12px] text-[#8f9db0]">{NOW_LABEL}分</span>
-          <button onClick={() => setShowNew(true)}
-            className="px-4 py-2 text-[13px] font-semibold text-[#1a2332] bg-white border border-[#e2e6ec] hover:bg-slate-50 rounded-lg transition-colors">
-            ＋ 従業員追加
-          </button>
-          <button onClick={handleSendAll} disabled={isPending || employees.length === 0}
-            className="px-4 py-2 text-[13px] font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 rounded-lg transition-colors">
-            全員に明細を送信
-          </button>
+          {tab === 'payroll' ? (
+            <>
+              <button onClick={() => setShowNew(true)}
+                className="px-4 py-2 text-[13px] font-semibold text-[#1a2332] bg-white border border-[#e2e6ec] hover:bg-slate-50 rounded-lg transition-colors">
+                ＋ 従業員追加
+              </button>
+              <button onClick={handleSendAll} disabled={isPending || employees.length === 0}
+                className="px-4 py-2 text-[13px] font-semibold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 rounded-lg transition-colors">
+                全員に明細を送信
+              </button>
+            </>
+          ) : (
+            <button onClick={() => setShowNewEntry(true)}
+              className="px-4 py-2 text-[13px] font-semibold text-white bg-[#1e3a5f] hover:bg-[#16304f] rounded-lg transition-colors">
+              ＋ 支払いを登録
+            </button>
+          )}
         </div>
       </div>
 
       <div className="p-8">
+        {tab === 'entries' ? (
+          <>
+            {/* 支払い記録サマリー */}
+            <div className="grid grid-cols-3 gap-4 mb-7">
+              {[
+                { label: '支払件数',      val: `${entries.length}件`,       sub: NOW_LABEL,     color: 'text-[#1a2332]', border: 'border-l-blue-600' },
+                { label: '支払総額',      val: formatYen(entryTotalAmount), sub: '税込合計',    color: 'text-blue-600',  border: 'border-l-blue-600' },
+                { label: '源泉所得税合計', val: formatYen(entryTotalTax),   sub: '10.21% 控除', color: 'text-red-500',   border: 'border-l-red-400'  },
+              ].map(c => (
+                <div key={c.label} className={cn('bg-white border border-[#e2e6ec] border-l-4 rounded-lg p-4 shadow-sm', c.border)}>
+                  <div className="text-[11px] font-semibold text-[#8f9db0] uppercase tracking-wide mb-1">{c.label}</div>
+                  <div className={cn('text-[20px] font-bold', c.color)}>{c.val}</div>
+                  <div className="text-[11px] text-[#8f9db0] mt-1">{c.sub}</div>
+                </div>
+              ))}
+            </div>
+
+            {loading ? (
+              <div className="bg-white border border-[#e2e6ec] rounded-lg p-16 text-center text-[13px] text-[#8f9db0]">データを読み込み中…</div>
+            ) : entries.length === 0 ? (
+              <div className="bg-white border border-[#e2e6ec] rounded-lg p-16 text-center">
+                <div className="text-[13px] text-[#8f9db0] mb-3">{NOW_LABEL}の支払い記録はありません</div>
+                <button onClick={() => setShowNewEntry(true)} className="text-[13px] font-semibold text-blue-600 hover:underline">＋ 最初の支払いを登録する</button>
+              </div>
+            ) : (
+              <div className="bg-white border border-[#e2e6ec] rounded-lg shadow-sm overflow-hidden">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-[#e2e6ec]">
+                      {['支払日','従業員','区分','支払金額','源泉所得税','手取り金額','摘要',''].map(h => (
+                        <th key={h} className="px-4 py-2.5 text-left text-[11px] font-bold text-[#8f9db0] uppercase tracking-[0.4px] whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {entries.map(entry => {
+                      const net = entry.amount - entry.tax_amount
+                      return (
+                        <tr key={entry.id} className="border-b border-[#e2e6ec] last:border-0 hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-3 text-[13px] text-[#5a6a7e] whitespace-nowrap">{entry.payment_date}</td>
+                          <td className="px-4 py-3">
+                            <div className="text-[13px] font-semibold text-[#1a2332]">{entry.employee?.name ?? empName(entry.employee_id)}</div>
+                            {entry.employee?.name_kana && <div className="text-[10px] text-[#8f9db0]">{entry.employee.name_kana}</div>}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700">
+                              {PAYMENT_TYPE_LABEL[entry.payment_type]}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-[13px] font-semibold font-mono text-right">{formatYen(entry.amount)}</td>
+                          <td className="px-4 py-3 text-[12px] text-red-500 font-mono text-right">−{formatYen(entry.tax_amount)}</td>
+                          <td className="px-4 py-3 text-[13px] font-bold text-green-700 font-mono text-right">{formatYen(net)}</td>
+                          <td className="px-4 py-3 text-[12px] text-[#8f9db0] max-w-[160px] truncate">{entry.description ?? '—'}</td>
+                          <td className="px-4 py-3">
+                            <button onClick={() => handleDeleteEntry(entry.id)} disabled={isPending}
+                              className="text-[11px] font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 px-2.5 py-1 rounded transition-colors disabled:opacity-50">
+                              削除
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-slate-50 border-t-2 border-[#cdd3dc]">
+                      <td colSpan={3} className="px-4 py-3 text-[12px] font-bold text-[#5a6a7e]">合計 {entries.length}件</td>
+                      <td className="px-4 py-3 text-[13px] font-bold text-[#1a2332] font-mono text-right">{formatYen(entryTotalAmount)}</td>
+                      <td className="px-4 py-3 text-[12px] font-bold text-red-500 font-mono text-right">−{formatYen(entryTotalTax)}</td>
+                      <td className="px-4 py-3 text-[14px] font-bold text-green-700 font-mono text-right">{formatYen(entryTotalNet)}</td>
+                      <td colSpan={2}></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </>
+        ) : (
+        <>
         {/* サマリー */}
         <div className="grid grid-cols-4 gap-4 mb-7">
           {[
@@ -369,6 +612,8 @@ export default function PayrollPage() {
               </tfoot>
             </table>
           </div>
+        )}
+        </>
         )}
       </div>
     </div>
