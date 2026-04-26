@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -224,6 +225,7 @@ function NewPartnerModal({
 
 // ─── PAGE ────────────────────────────────────────────────
 export default function PartnersPage() {
+  const router = useRouter()
   const [partners, setPartners] = useState<PartnerWithTotal[]>([])
   const [loading, setLoading] = useState(true)
   const [showNew, setShowNew] = useState(false)
@@ -235,12 +237,17 @@ export default function PartnersPage() {
     setLoading(false)
   }
 
+  async function handleSaved() {
+    router.refresh()
+    await load()
+  }
+
   useEffect(() => { load() }, [])
 
   return (
     <div>
       {showNew && (
-        <NewPartnerModal onClose={() => setShowNew(false)} onSaved={load} />
+        <NewPartnerModal onClose={() => setShowNew(false)} onSaved={handleSaved} />
       )}
 
       {/* Topbar */}
