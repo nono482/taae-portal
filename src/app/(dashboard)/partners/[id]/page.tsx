@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils'
 import { updatePartner, type Partner } from '@/app/actions/partners'
 import {
   createWorkOrder, updateWorkOrderStatus, deleteWorkOrder,
-  WORK_ORDER_STATUS, type WorkOrder,
+  type WorkOrder,
 } from '@/app/actions/workOrders'
 import { createDocument, deleteDocument, type Document, type DocType } from '@/app/actions/documents'
 import {
@@ -16,6 +16,7 @@ import {
   INVOICE_STATUS_LABEL,
   INVOICE_STATUS_COLOR,
 } from '@/lib/tax'
+import { WORK_ORDER_STATUS } from '@/lib/constants'
 
 function formatYen(n: number) { return `¥${n.toLocaleString('ja-JP')}` }
 function formatDate(s: string | null) {

@@ -1,15 +1,18 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import { revalidatePath } from 'next/cache'
+import { WORK_ORDER_STATUS } from '@/lib/constants'
+
+function adminDb() { return createAdminClient() as any }
 
 async function getCtx() {
   const supabase = await createClient()
-  const db = supabase as any
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { db, user: null, tenantId: null }
-  const { data: u } = await db.from('users').select('tenant_id').eq('id', user.id).single()
-  return { db, user, tenantId: u?.tenant_id ?? null }
+  if (!user) return { user: null, tenantId: null }
+  const { data: u } = await adminDb().from('users').select('tenant_id').eq('id', user.id).single()
+  return { user, tenantId: (u?.tenant_id ?? null) as string | null }
 }
 
 export type WorkOrder = {
@@ -26,27 +29,21 @@ export type WorkOrder = {
   partner?: { company_name: string } | null
 }
 
-export const WORK_ORDER_STATUS: Record<string, { label: string; cls: string; dot: string }> = {
-  ordered:     { label: '発注済',   cls: 'bg-blue-50 text-blue-700',    dot: 'bg-blue-500'   },
-  in_progress: { label: '進行中',   cls: 'bg-amber-50 text-amber-700',  dot: 'bg-amber-500'  },
-  completed:   { label: '完了',     cls: 'bg-green-50 text-green-700',  dot: 'bg-green-500'  },
-  cancelled:   { label: 'キャンセル', cls: 'bg-slate-50 text-slate-500', dot: 'bg-slate-400'  },
-}
-
 // ─── 発注一覧 ─────────────────────────────────────────────
 export async function getWorkOrders(partnerId?: string) {
-  const { db, tenantId } = await getCtx()
+  const { tenantId } = await getCtx()
   if (!tenantId) return { data: [] }
 
-  let q = db
+  let q = adminDb()
     .from('work_orders')
-    .select('*, partner:partners(company_name)')
+    .select('id, partner_id, title, description, order_date, delivery_date, amount, status, notes, created_at')
     .eq('tenant_id', tenantId)
     .order('order_date', { ascending: false })
 
   if (partnerId) q = q.eq('partner_id', partnerId)
 
-  const { data } = await q
+  const { data, error } = await q
+  if (error) { console.error('[workOrders] getWorkOrders error:', error.message); return { data: [] } }
   return { data: (data ?? []) as WorkOrder[] }
 }
 
@@ -60,10 +57,10 @@ export async function createWorkOrder(input: {
   amount: number
   notes?: string
 }) {
-  const { db, tenantId } = await getCtx()
-  if (!tenantId) return { error: '未認証' }
+  const { user, tenantId } = await getCtx()
+  if (!user || !tenantId) return { error: '未認証' }
 
-  const { error } = await db.from('work_orders').insert({
+  const { error } = await adminDb().from('work_orders').insert({
     tenant_id:     tenantId,
     partner_id:    input.partner_id,
     title:         input.title,
@@ -83,10 +80,10 @@ export async function createWorkOrder(input: {
 
 // ─── ステータス更新 ───────────────────────────────────────
 export async function updateWorkOrderStatus(id: string, status: string, partnerId: string) {
-  const { db, tenantId } = await getCtx()
-  if (!tenantId) return { error: '未認証' }
+  const { user, tenantId } = await getCtx()
+  if (!user || !tenantId) return { error: '未認証' }
 
-  const { error } = await db
+  const { error } = await adminDb()
     .from('work_orders')
     .update({ status })
     .eq('id', id)
@@ -99,10 +96,10 @@ export async function updateWorkOrderStatus(id: string, status: string, partnerI
 
 // ─── 削除 ─────────────────────────────────────────────────
 export async function deleteWorkOrder(id: string, partnerId: string) {
-  const { db, tenantId } = await getCtx()
-  if (!tenantId) return { error: '未認証' }
+  const { user, tenantId } = await getCtx()
+  if (!user || !tenantId) return { error: '未認証' }
 
-  const { error } = await db
+  const { error } = await adminDb()
     .from('work_orders')
     .delete()
     .eq('id', id)
