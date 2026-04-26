@@ -4,12 +4,12 @@ import { useState, useEffect, useTransition, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { getPartner, updatePartner, type Partner } from '@/app/actions/partners'
+import { updatePartner, type Partner } from '@/app/actions/partners'
 import {
-  getWorkOrders, createWorkOrder, updateWorkOrderStatus, deleteWorkOrder,
+  createWorkOrder, updateWorkOrderStatus, deleteWorkOrder,
   WORK_ORDER_STATUS, type WorkOrder,
 } from '@/app/actions/workOrders'
-import { getDocuments, createDocument, deleteDocument, type Document, type DocType } from '@/app/actions/documents'
+import { createDocument, deleteDocument, type Document, type DocType } from '@/app/actions/documents'
 import {
   calculateDeductibleTax,
   getInvoiceStatus,
@@ -644,16 +644,19 @@ export default function PartnerDetailPage() {
   const [, startTransition]             = useTransition()
 
   const load = useCallback(async () => {
-    const [partnerRes, ordersRes, docsRes] = await Promise.all([
-      getPartner(id),
-      getWorkOrders(id),
-      getDocuments(id),
-    ])
-    setPartner(partnerRes.data)
-    setTenantName(partnerRes.tenantName)
-    setWorkOrders(ordersRes.data)
-    setDocuments(docsRes.data)
-    setLoading(false)
+    try {
+      const res = await fetch(`/api/partners/${id}`, { cache: 'no-store' })
+      if (!res.ok) throw new Error(`Failed to load partner detail: ${res.statusText}`)
+      const payload = await res.json()
+      setPartner(payload.partner)
+      setTenantName(payload.tenantName)
+      setWorkOrders(payload.workOrders ?? [])
+      setDocuments(payload.documents ?? [])
+    } catch (e) {
+      console.error('[PartnerDetail] load error:', e)
+    } finally {
+      setLoading(false)
+    }
   }, [id])
 
   useEffect(() => { load() }, [load])
