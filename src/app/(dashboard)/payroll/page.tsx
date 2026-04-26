@@ -4,8 +4,8 @@ import { useState, useEffect, useTransition } from 'react'
 import { calculatePayroll, formatYen } from '@/lib/payrollCalculator'
 import { cn } from '@/lib/utils'
 import { getPayrollData, ensurePayrollRecords, markPayrollSent, markAllPayrollSent, createEmployee } from '@/app/actions/payroll'
-import { getPayrollEntries, createPayrollEntry, deletePayrollEntry, type PayrollEntry, type PaymentType } from '@/app/actions/payrollEntries'
-import { PAYMENT_TYPE_LABEL } from '@/constants/payroll'
+import { getPayrollEntries, createPayrollEntry, deletePayrollEntry, type PayrollEntry } from '@/app/actions/payrollEntries'
+import { PAYMENT_TYPE_LABEL, type PaymentType } from '@/constants/payroll'
 
 const NOW_MONTH = (() => {
   const d = new Date()

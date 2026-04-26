@@ -15,7 +15,6 @@ async function getCtx() {
 }
 
 import type { PaymentType } from '@/constants/payroll'
-export type { PaymentType }
 
 export type PayrollEntry = {
   id:           string
