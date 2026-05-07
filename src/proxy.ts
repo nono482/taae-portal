@@ -7,9 +7,13 @@ const PUBLIC_PATHS = [
   '/invite',
   '/update-password',
   '/auth',
+  '/demo',
+  '/sales',
+  '/api/prospect',
+  '/api/sales',
 ]
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   if (PUBLIC_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))) {
